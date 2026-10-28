@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use super::Theme;
-use crate::app::App;
+use crate::{app::App, stats::wpm_to_latency};
 
 pub const HEIGHT: u16 = 3;
 const KEY_W: usize = 4;
@@ -26,11 +26,12 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         .layout
         .rows
         .iter()
+        .skip(1)
         .enumerate()
         .map(|(r, row)| {
-            let mut spans = vec![Span::raw(" ".repeat(pad + STAGGER[r]))];
+            let mut spans = vec![Span::raw(" ".repeat(pad + STAGGER[r.min(2)]))];
             for key in row {
-                let mut style = match app.stats.weakness(key.ch) {
+                let mut style = match app.stats.key(key.ch).map(|s| s.weakness(wpm_to_latency(35.0))) {
                     Some(w) => Style::new().fg(theme.heat(w)),
                     None if key.home => theme.key_home,
                     None => theme.key,

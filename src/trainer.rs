@@ -9,7 +9,10 @@
 
 use rand::seq::IndexedRandom;
 
-use crate::{layout::Layout, stats::Stats};
+use crate::{
+    layout::Layout,
+    stats::{LayoutProfile, wpm_to_latency},
+};
 
 const WORDS: &str = include_str!("../assets/words_en.txt");
 
@@ -26,7 +29,7 @@ impl Trainer {
 
     /// Builds a drill of `len` words using only `unlocked` keys, favouring
     /// words that contain keys the learner is weak on.
-    pub fn drill(&self, layout: &Layout, stats: &Stats, unlocked: usize, len: usize) -> String {
+    pub fn drill(&self, layout: &Layout, stats: &LayoutProfile, unlocked: usize, len: usize) -> String {
         let allowed: Vec<char> = layout.learning_order().into_iter().take(unlocked).collect();
         let pool: Vec<&str> = self
             .words
@@ -42,7 +45,8 @@ impl Trainer {
         let weighted: Vec<(&str, f64)> = pool
             .iter()
             .map(|w| {
-                let weak: f64 = w.chars().map(|c| stats.weakness(c).unwrap_or(0.7)).sum();
+                let target_ms = wpm_to_latency(35.0);
+                let weak: f64 = w.chars().map(|c| stats.key(c).map_or(0.7, |s| s.weakness(target_ms))).sum();
                 (*w, 0.1 + weak / w.len() as f64)
             })
             .collect();

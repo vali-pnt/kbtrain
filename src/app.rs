@@ -4,7 +4,13 @@ use anyhow::{Result, anyhow};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::DefaultTerminal;
 
-use crate::{config::Config, layout::Layout, session::Session, stats::Stats, trainer::Trainer};
+use crate::{
+    config::Config,
+    layout::{self, Layout},
+    session::{ErrorMode, Outcome, Session},
+    stats::LayoutProfile,
+    trainer::Trainer,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -15,7 +21,7 @@ pub enum Screen {
 pub struct App {
     pub config: Config,
     pub layout: Layout,
-    pub stats: Stats,
+    pub stats: LayoutProfile,
     pub trainer: Trainer,
     pub session: Session,
     pub screen: Screen,
@@ -28,12 +34,17 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config) -> Result<Self> {
-        let layout = Layout::by_id(&config.layout)
+        let layout = layout::builtin()
+            .into_iter()
+            .find(|l| l.id == config.layout)
             .ok_or_else(|| anyhow!("unknown layout '{}' (try --list-layouts)", config.layout))?;
-        let stats = Stats::default();
+        let stats = LayoutProfile::default();
         let trainer = Trainer::new();
         let unlocked = 26;
-        let session = Session::new(trainer.drill(&layout, &stats, unlocked, config.drill_length));
+        let session = Session::new(
+            &trainer.drill(&layout, &stats, unlocked, config.drill_length),
+            ErrorMode::default(),
+        );
         Ok(Self {
             config,
             layout,
@@ -66,7 +77,7 @@ impl App {
         let text = self
             .trainer
             .drill(&self.layout, &self.stats, self.unlocked, self.config.drill_length);
-        self.session = Session::new(text);
+        self.session = Session::new(&text, ErrorMode::default());
         self.last_press = None;
         self.screen = Screen::Typing;
     }
@@ -81,10 +92,9 @@ impl App {
             (Screen::Typing, KeyCode::Tab) => self.new_drill(),
             (Screen::Typing, KeyCode::Backspace) => self.session.backspace(),
             (Screen::Typing, KeyCode::Char(c)) => {
-                if let Some((stroke, latency)) = self.session.type_char(c) {
-                    let ok = stroke.correct();
-                    self.stats.record(stroke.expected, ok, latency);
-                    self.last_press = Some((c, ok));
+                if let Outcome::Typed { expected, correct, latency_ms, context, .. } = self.session.type_char(c) {
+                    self.stats.record(expected, correct, latency_ms, &context);
+                    self.last_press = Some((c, correct));
                 }
                 if self.session.is_done() {
                     self.screen = Screen::Results;

@@ -50,7 +50,7 @@ fn draw_header(f: &mut Frame, area: ratatui::layout::Rect, app: &App, theme: &Th
         Span::styled(format!("  {}  ", app.layout.name), theme.dim),
         Span::styled(format!("{:>5.0} wpm", s.wpm()), theme.accent),
         Span::styled(format!("  {:>5.1}% acc", s.accuracy() * 100.0), theme.dim),
-        Span::styled(format!("  {:>5.1}s", s.elapsed().as_secs_f64()), theme.dim),
+        Span::styled(format!("  {:>5.1}s", s.elapsed()), theme.dim),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
