@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod content;
 mod layout;
 mod session;
 mod stats;

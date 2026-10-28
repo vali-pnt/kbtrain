@@ -9,7 +9,8 @@ use crate::{
     layout::{self, Layout},
     session::{ErrorMode, Outcome, Session},
     stats::LayoutProfile,
-    trainer::Trainer,
+    stats::wpm_to_latency,
+    trainer::{Mode, Options, Trainer},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +43,7 @@ impl App {
         let trainer = Trainer::new();
         let unlocked = 26;
         let session = Session::new(
-            &trainer.drill(&layout, &stats, unlocked, config.drill_length),
+            &trainer.generate(Mode::Learn, &layout, &stats, &opts(&config), 0, &mut rand::rng()).text,
             ErrorMode::default(),
         );
         Ok(Self {
@@ -76,7 +77,8 @@ impl App {
     fn new_drill(&mut self) {
         let text = self
             .trainer
-            .drill(&self.layout, &self.stats, self.unlocked, self.config.drill_length);
+            .generate(Mode::Learn, &self.layout, &self.stats, &opts(&self.config), 0, &mut rand::rng())
+            .text;
         self.session = Session::new(&text, ErrorMode::default());
         self.last_press = None;
         self.screen = Screen::Typing;
@@ -105,5 +107,18 @@ impl App {
             }
             _ => {}
         }
+    }
+}
+
+fn opts(config: &Config) -> Options {
+    Options {
+        target_ms: wpm_to_latency(35.0),
+        words: config.drill_length,
+        progressive: true,
+        punctuation: false,
+        numbers: false,
+        capitals: false,
+        test_secs: 30,
+        code_lang: "any".into(),
     }
 }
