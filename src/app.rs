@@ -296,7 +296,8 @@ impl App {
             (Animations::Off, _) => 250,
             (Animations::Reduced, _) => 50,
             (Animations::Full, Screen::Typing) => 33,
-            (Animations::Full, _) => 16,
+            (Animations::Full, Screen::Home) => 50,
+            (Animations::Full, _) => 33,
         };
         Duration::from_millis(ms)
     }

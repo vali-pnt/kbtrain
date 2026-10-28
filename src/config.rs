@@ -200,4 +200,22 @@ mod tests {
         assert_eq!(partial.error_mode, ErrorMode::Stop);
         assert_eq!(partial.target_wpm, 35);
     }
+
+    #[test]
+    fn readme_example_config_is_valid() {
+        let readme = include_str!("../README.md");
+        let start = readme.find("```toml\n").expect("README has a toml example") + 8;
+        let end = start + readme[start..].find("```").unwrap();
+        let c: Config = toml::from_str(&readme[start..end]).unwrap();
+        assert_eq!(c.keyboard, KeyboardMode::Adaptive);
+        assert_eq!(c.color, ColorDepth::Auto);
+        assert_eq!(c.layouts.len(), 1);
+        let l = c.layouts[0].build().unwrap();
+        assert_eq!(l.learning_order().len(), 26);
+        let all: Config = toml::from_str(
+            "color = \"ansi256\"\nerror_mode = \"backspace\"\nanimations = \"reduced\"",
+        )
+        .unwrap();
+        assert_eq!(all.color, ColorDepth::Ansi256);
+    }
 }

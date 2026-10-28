@@ -21,6 +21,9 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let anim = app.animations() != Animations::Off;
     let t = if anim { app.t } else { 0.0 };
+    // Slow ambient effects step at 8 Hz: invisible difference, far less
+    // terminal output (matters over SSH).
+    let slow = (t * 8.0).floor() / 8.0;
     let big = area.width >= 50 && area.height >= 22;
     let title_h = if big { fx::FONT_H + 2 } else { 2 };
     let panel_h = MENU.len() as u16 + 2;
@@ -36,7 +39,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         height: horizon.min(area.height),
         ..area
     };
-    stars_or_plain(f, sky, app, t);
+    stars_or_plain(f, sky, app, slow);
     if area.height > title_h + 4 {
         // Start below the tagline so the sun never sits behind text.
         let skip = title_h + 1;
@@ -52,7 +55,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
     if big {
         let w = fx::big_width(TITLE);
         let x = area.x + area.width.saturating_sub(w) / 2;
-        let shift = t * 0.15;
+        let shift = slow * 0.15;
         let stops = theme.gradient;
         fx::big_text(
             f.buffer_mut(),
@@ -80,7 +83,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         );
     } else {
         f.render_widget(
-            gradient_line("KBTRAIN", theme, t * 0.15).centered(),
+            gradient_line("KBTRAIN", theme, slow * 0.15).centered(),
             Rect {
                 y: area.y,
                 height: 1,
@@ -115,7 +118,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         .flex(Flex::Center)
         .spacing(2)
         .split(row);
-    draw_menu(f, rects[0], app, t);
+    draw_menu(f, rects[0], app, slow);
     if wide {
         draw_info(f, rects[1], app);
     }
