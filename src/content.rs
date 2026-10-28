@@ -11,6 +11,18 @@ pub struct Snippet {
 
 pub const LANGUAGES: [&str; 6] = ["rust", "python", "javascript", "go", "c", "shell"];
 
+pub fn language_name(lang: &str) -> &str {
+    match lang {
+        "rust" => "Rust",
+        "python" => "Python",
+        "javascript" => "JavaScript",
+        "go" => "Go",
+        "c" => "C",
+        "shell" => "Shell",
+        other => other,
+    }
+}
+
 pub const SNIPPETS: &[Snippet] = &[
     Snippet {
         lang: "rust",
@@ -153,8 +165,8 @@ done"#,
 
 /// Extensions treated as code: newlines and indentation are kept.
 const CODE_EXTS: [&str; 22] = [
-    "rs", "py", "js", "ts", "jsx", "tsx", "go", "c", "h", "cpp", "hpp", "java", "kt", "rb", "sh", "lua", "zig",
-    "hs", "toml", "json", "yaml", "yml",
+    "rs", "py", "js", "ts", "jsx", "tsx", "go", "c", "h", "cpp", "hpp", "java", "kt", "rb", "sh",
+    "lua", "zig", "hs", "toml", "json", "yaml", "yml",
 ];
 
 pub fn is_code_path(path: &Path) -> bool {
@@ -216,10 +228,13 @@ pub fn chunk(text: &str, start: usize, approx: usize, code: bool) -> (usize, usi
             matches!(chars[i], '.' | '!' | '?') && chars.get(i + 1).is_none_or(|c| *c == ' ')
         }
     };
-    let mut end = (soft..hard_end).find(|&i| is_break(i)).map_or(hard_end, |i| if code { i } else { i + 1 });
+    let mut end = (soft..hard_end)
+        .find(|&i| is_break(i))
+        .map_or(hard_end, |i| if code { i } else { i + 1 });
     if end < chars.len() && !code {
         // Never cut a word in half.
-        while end > start + 1 && chars[end - 1] != ' ' && chars.get(end).is_some_and(|c| *c != ' ') {
+        while end > start + 1 && chars[end - 1] != ' ' && chars.get(end).is_some_and(|c| *c != ' ')
+        {
             end -= 1;
         }
     }
@@ -241,7 +256,10 @@ mod tests {
 
     #[test]
     fn normalizes_typography() {
-        assert_eq!(normalize("\u{201C}hi\u{201D} \u{2014} it\u{2019}s\u{2026}"), "\"hi\" - it's...");
+        assert_eq!(
+            normalize("\u{201C}hi\u{201D} \u{2014} it\u{2019}s\u{2026}"),
+            "\"hi\" - it's..."
+        );
     }
 
     #[test]

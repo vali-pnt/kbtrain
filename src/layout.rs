@@ -61,20 +61,6 @@ impl Finger {
             Finger::Thumb => "thumb",
         }
     }
-
-    pub fn short(self) -> &'static str {
-        match self {
-            Finger::LPinky => "LP",
-            Finger::LRing => "LR",
-            Finger::LMiddle => "LM",
-            Finger::LIndex => "LI",
-            Finger::RIndex => "RI",
-            Finger::RMiddle => "RM",
-            Finger::RRing => "RR",
-            Finger::RPinky => "RP",
-            Finger::Thumb => "TH",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +116,7 @@ fn finger_for(row: usize, col: usize) -> Finger {
 }
 
 /// A layout definition as written in the config file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LayoutDef {
     pub id: String,
     pub name: String,
@@ -151,7 +137,11 @@ impl LayoutDef {
             .iter()
             .enumerate()
             .map(|(r, s)| {
-                let shifted: Vec<char> = self.shift_rows.get(r).map(|s| s.chars().collect()).unwrap_or_default();
+                let shifted: Vec<char> = self
+                    .shift_rows
+                    .get(r)
+                    .map(|s| s.chars().collect())
+                    .unwrap_or_default();
                 s.chars()
                     .enumerate()
                     .map(|(c, ch)| Key {
@@ -165,7 +155,11 @@ impl LayoutDef {
                     .collect()
             })
             .collect();
-        Ok(Layout { id: self.id.clone(), name: self.name.clone(), rows })
+        Ok(Layout {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            rows,
+        })
     }
 }
 
@@ -212,8 +206,18 @@ pub fn builtin_defs() -> Vec<LayoutDef> {
         def(
             "dvorak",
             "Dvorak",
-            ["`1234567890[]", "',.pyfgcrl/=\\", "aoeuidhtns-", ";qjkxbmwvz"],
-            ["~!@#$%^&*(){}", "\"<>PYFGCRL?+|", "AOEUIDHTNS_", ":QJKXBMWVZ"],
+            [
+                "`1234567890[]",
+                "',.pyfgcrl/=\\",
+                "aoeuidhtns-",
+                ";qjkxbmwvz",
+            ],
+            [
+                "~!@#$%^&*(){}",
+                "\"<>PYFGCRL?+|",
+                "AOEUIDHTNS_",
+                ":QJKXBMWVZ",
+            ],
         ),
         def(
             "workman",
@@ -224,20 +228,43 @@ pub fn builtin_defs() -> Vec<LayoutDef> {
         def(
             "qwertz",
             "QWERTZ (German)",
-            ["^1234567890ß´", "qwertzuiopü+#", "asdfghjklöä", "yxcvbnm,.-"],
-            ["°!\"§$%&/()=?`", "QWERTZUIOPÜ*'", "ASDFGHJKLÖÄ", "YXCVBNM;:_"],
+            [
+                "^1234567890ß´",
+                "qwertzuiopü+#",
+                "asdfghjklöä",
+                "yxcvbnm,.-",
+            ],
+            [
+                "°!\"§$%&/()=?`",
+                "QWERTZUIOPÜ*'",
+                "ASDFGHJKLÖÄ",
+                "YXCVBNM;:_",
+            ],
         ),
         def(
             "azerty",
             "AZERTY (French)",
-            ["²&é\"'(-è_çà)=", "azertyuiop^$", "qsdfghjklmù*", "wxcvbn,;:!"],
-            ["²1234567890°+", "AZERTYUIOP¨£", "QSDFGHJKLM%µ", "WXCVBN?./§"],
+            [
+                "²&é\"'(-è_çà)=",
+                "azertyuiop^$",
+                "qsdfghjklmù*",
+                "wxcvbn,;:!",
+            ],
+            [
+                "²1234567890°+",
+                "AZERTYUIOP¨£",
+                "QSDFGHJKLM%µ",
+                "WXCVBN?./§",
+            ],
         ),
     ]
 }
 
 pub fn builtin() -> Vec<Layout> {
-    builtin_defs().iter().filter_map(|d| d.build().ok()).collect()
+    builtin_defs()
+        .iter()
+        .filter_map(|d| d.build().ok())
+        .collect()
 }
 
 impl Layout {
@@ -264,7 +291,11 @@ impl Layout {
 
     /// Lowercase ASCII letters on the home row.
     pub fn home_letters(&self) -> Vec<char> {
-        self.rows[HOME_ROW].iter().map(|k| k.ch).filter(char::is_ascii_lowercase).collect()
+        self.rows[HOME_ROW]
+            .iter()
+            .map(|k| k.ch)
+            .filter(char::is_ascii_lowercase)
+            .collect()
     }
 
     /// Letters ordered for progressive unlocking: home-position keys from the
@@ -277,7 +308,10 @@ impl Layout {
             Finger::LRing | Finger::RRing => 2,
             _ => 3,
         };
-        let mut home: Vec<&Key> = self.rows[HOME_ROW].iter().filter(|k| k.ch.is_ascii_lowercase()).collect();
+        let mut home: Vec<&Key> = self.rows[HOME_ROW]
+            .iter()
+            .filter(|k| k.ch.is_ascii_lowercase())
+            .collect();
         home.sort_by_key(|k| (!k.home, finger_rank(k.finger), k.col));
         let mut order: Vec<char> = home.iter().map(|k| k.ch).collect();
 
@@ -297,7 +331,9 @@ impl Layout {
 
     /// How many keys are unlocked on day one.
     pub fn initial_unlocked(&self) -> usize {
-        self.home_letters().len().clamp(6, self.learning_order().len())
+        self.home_letters()
+            .len()
+            .clamp(6, self.learning_order().len())
     }
 }
 
@@ -312,7 +348,12 @@ mod tests {
             assert_eq!(order.len(), 26, "{} has {} letters", l.id, order.len());
             for c in 'a'..='z' {
                 assert!(l.locate(c).is_some(), "{} missing {c}", l.id);
-                assert!(l.locate(c.to_ascii_uppercase()).is_some(), "{} missing {}", l.id, c.to_ascii_uppercase());
+                assert!(
+                    l.locate(c.to_ascii_uppercase()).is_some(),
+                    "{} missing {}",
+                    l.id,
+                    c.to_ascii_uppercase()
+                );
             }
         }
     }
@@ -340,7 +381,12 @@ mod tests {
         let d = LayoutDef {
             id: "x".into(),
             name: "X".into(),
-            rows: vec![US_NUM.into(), "qwertyuiop".into(), "asdfghjkl;".into(), "zxcvbnm,./".into()],
+            rows: vec![
+                US_NUM.into(),
+                "qwertyuiop".into(),
+                "asdfghjkl;".into(),
+                "zxcvbnm,./".into(),
+            ],
             shift_rows: vec![],
         };
         let l = d.build().unwrap();

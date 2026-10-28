@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 const ALPHA: f64 = 0.15;
 /// Inter-key gaps longer than this are pauses, not typing speed.
 pub const LATENCY_CAP_MS: f64 = 2000.0;
+/// Gaps shorter than this are key repeat or pasted text, not typing.
+pub const LATENCY_FLOOR_MS: f64 = 25.0;
 /// Samples needed before a key's speed is trusted.
 pub const MIN_SAMPLES: u32 = 12;
 /// Error rate at or below which a key counts as accurate.
@@ -105,7 +107,10 @@ impl Stat {
         }
         let e = if correct { 0.0 } else { 1.0 };
         self.error_rate = self.error_rate * (1.0 - ALPHA) + e * ALPHA;
-        if let (true, Some(l)) = (correct, latency_ms.filter(|l| *l > 0.0 && *l < LATENCY_CAP_MS)) {
+        if let (true, Some(l)) = (
+            correct,
+            latency_ms.filter(|l| (LATENCY_FLOOR_MS..LATENCY_CAP_MS).contains(l)),
+        ) {
             self.latency_ms = Some(match self.latency_ms {
                 Some(prev) => prev * (1.0 - ALPHA) + l * ALPHA,
                 None => l,
@@ -142,7 +147,9 @@ impl Stat {
 
     /// Normalised weakness in [0, 1]; higher means needs more practice.
     pub fn weakness(&self, target_ms: f64) -> f64 {
-        let lat = self.latency_ms.map_or(0.7, |l| ((l / target_ms) - 0.5).clamp(0.0, 1.5) / 1.5);
+        let lat = self
+            .latency_ms
+            .map_or(0.7, |l| ((l / target_ms) - 0.5).clamp(0.0, 1.5) / 1.5);
         let err = (self.error_rate * 5.0).clamp(0.0, 1.0);
         (0.6 * lat + 0.4 * err).clamp(0.0, 1.0)
     }
@@ -194,13 +201,25 @@ impl LayoutProfile {
         if !is_letter(&ch) {
             return;
         }
-        let lower: Vec<char> = prev.iter().rev().take(2).rev().flat_map(|c| c.to_lowercase()).collect();
+        let lower: Vec<char> = prev
+            .iter()
+            .rev()
+            .take(2)
+            .rev()
+            .flat_map(|c| c.to_lowercase())
+            .collect();
         if let Some(&p) = lower.last().filter(|c| c.is_alphabetic()) {
             let bigram: String = [p, key].iter().collect();
-            self.bigrams.entry(bigram).or_default().record(correct, latency);
+            self.bigrams
+                .entry(bigram)
+                .or_default()
+                .record(correct, latency);
             if lower.len() == 2 && lower[0].is_alphabetic() {
                 let trigram: String = [lower[0], p, key].iter().collect();
-                self.trigrams.entry(trigram).or_default().record(correct, latency);
+                self.trigrams
+                    .entry(trigram)
+                    .or_default()
+                    .record(correct, latency);
             }
         }
     }
@@ -221,7 +240,11 @@ impl LayoutProfile {
             .values()
             .filter(|s| s.memory.is_due(now) && s.weakness(target_ms) > 0.35)
             .count();
-        let keys = self.keys.values().filter(|s| s.memory.is_due(now) && s.weakness(target_ms) > 0.35).count();
+        let keys = self
+            .keys
+            .values()
+            .filter(|s| s.memory.is_due(now) && s.weakness(target_ms) > 0.35)
+            .count();
         words + grams + keys
     }
 }
@@ -272,9 +295,13 @@ impl Profile {
 
     pub fn load(path: &Path) -> Result<Self> {
         if !path.exists() {
-            return Ok(Self { version: 1, ..Self::default() });
+            return Ok(Self {
+                version: 1,
+                ..Self::default()
+            });
         }
-        let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 
@@ -382,7 +409,10 @@ mod tests {
         early.review(60, 1.0);
         m.review(later, 1.0);
         assert!(m.stability > s1 * 1.5);
-        assert!(m.stability > early.stability, "spacing effect: late success grows stability more");
+        assert!(
+            m.stability > early.stability,
+            "spacing effect: late success grows stability more"
+        );
         let s2 = m.stability;
         m.review(later + 60, 0.2);
         assert!(m.stability < s2);
@@ -425,7 +455,14 @@ mod tests {
         let lp = p.layout_mut("qwerty");
         lp.record('a', true, Some(200.0), &[]);
         lp.record(';', false, None, &['a']);
-        lp.words.insert("hello".into(), WordStat { attempts: 2, misses: 1, memory: Memory::default() });
+        lp.words.insert(
+            "hello".into(),
+            WordStat {
+                attempts: 2,
+                misses: 1,
+                memory: Memory::default(),
+            },
+        );
         p.add_session(
             today(),
             SessionRecord {

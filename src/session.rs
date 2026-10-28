@@ -140,7 +140,8 @@ impl Session {
     /// Appends more text (used by timed tests that outlast their word list).
     pub fn extend(&mut self, text: &str) {
         let more: Vec<char> = text.chars().collect();
-        self.ever_wrong.extend(std::iter::repeat_n(false, more.len()));
+        self.ever_wrong
+            .extend(std::iter::repeat_n(false, more.len()));
         self.target.extend(more);
     }
 
@@ -168,15 +169,26 @@ impl Session {
     }
 
     pub fn wrong_count(&self) -> usize {
-        self.input.iter().zip(&self.target).filter(|(a, b)| a != b).count()
+        self.input
+            .iter()
+            .zip(&self.target)
+            .filter(|(a, b)| a != b)
+            .count()
     }
 
+    #[cfg(test)]
     pub fn type_char(&mut self, c: char) -> Outcome {
         self.type_char_at(c, Instant::now())
     }
 
     pub fn type_char_at(&mut self, c: char, now: Instant) -> Outcome {
-        let Some(expected) = self.expected() else { return Outcome::Ignored };
+        let Some(expected) = self.expected() else {
+            return Outcome::Ignored;
+        };
+        // Habitual indentation after an auto-indented newline is harmless.
+        if c == ' ' && expected != ' ' && self.auto.last() == Some(&true) {
+            return Outcome::Ignored;
+        }
         if self.error_mode == ErrorMode::Backspace && self.wrong_count() > 0 {
             self.last_blocked = Some(now);
             return Outcome::Blocked;
@@ -185,13 +197,24 @@ impl Session {
         let index = self.input.len();
         let correct = c == expected;
         let prev = self.strokes.last();
-        let clean = prev.is_some_and(|p| p.correct() && p.index < index && (p.index + 1..index).all(|i| self.auto[i]));
+        let clean = prev.is_some_and(|p| {
+            p.correct() && p.index < index && (p.index + 1..index).all(|i| self.auto[i])
+        });
         let latency_ms = match prev {
             Some(p) if clean => Some((self.active - p.at) * 1000.0).filter(|l| *l < LATENCY_CAP_MS),
             _ => None,
         };
-        let context = if clean { self.target[index.saturating_sub(2)..index].to_vec() } else { Vec::new() };
-        self.strokes.push(Stroke { index, expected, typed: c, at: self.active });
+        let context = if clean {
+            self.target[index.saturating_sub(2)..index].to_vec()
+        } else {
+            Vec::new()
+        };
+        self.strokes.push(Stroke {
+            index,
+            expected,
+            typed: c,
+            at: self.active,
+        });
 
         if correct {
             self.combo += 1;
@@ -209,14 +232,24 @@ impl Session {
             self.input.push(c);
             self.auto.push(false);
             if correct && expected == '\n' && self.auto_indent {
-                while let Some(&ws) = self.target.get(self.input.len()).filter(|c| **c == ' ' || **c == '\t') {
+                while let Some(&ws) = self
+                    .target
+                    .get(self.input.len())
+                    .filter(|c| **c == ' ' || **c == '\t')
+                {
                     self.input.push(ws);
                     self.auto.push(true);
                 }
             }
         }
         self.check_finished();
-        Outcome::Typed { index, expected, correct, latency_ms, context }
+        Outcome::Typed {
+            index,
+            expected,
+            correct,
+            latency_ms,
+            context,
+        }
     }
 
     fn check_finished(&mut self) {
@@ -264,11 +297,11 @@ impl Session {
 
     /// Ends a timed test once its limit passes. Returns true if it just ended.
     pub fn tick(&mut self, now: Instant) -> bool {
-        if let (Some(limit), Some(start), None) = (self.time_limit, self.started, self.finished) {
-            if (now - start).as_secs_f64() >= limit {
-                self.finished = Some(limit);
-                return true;
-            }
+        if let (Some(limit), Some(start), None) = (self.time_limit, self.started, self.finished)
+            && (now - start).as_secs_f64() >= limit
+        {
+            self.finished = Some(limit);
+            return true;
         }
         false
     }
@@ -278,11 +311,15 @@ impl Session {
         if let Some(f) = self.finished {
             return f;
         }
-        let Some(start) = self.started else { return 0.0 };
+        let Some(start) = self.started else {
+            return 0.0;
+        };
         if let Some(limit) = self.time_limit {
             return start.elapsed().as_secs_f64().min(limit);
         }
-        let idle = self.last.map_or(0.0, |l| l.elapsed().as_secs_f64().min(IDLE_CAP));
+        let idle = self
+            .last
+            .map_or(0.0, |l| l.elapsed().as_secs_f64().min(IDLE_CAP));
         self.active + idle
     }
 
@@ -291,7 +328,11 @@ impl Session {
     }
 
     pub fn correct_chars(&self) -> usize {
-        self.input.iter().zip(&self.target).filter(|(a, b)| a == b).count()
+        self.input
+            .iter()
+            .zip(&self.target)
+            .filter(|(a, b)| a == b)
+            .count()
     }
 
     fn per_minute(&self, chars: f64) -> f64 {
@@ -394,7 +435,11 @@ impl Session {
             if i > n {
                 break; // unfinished word
             }
-            let strokes: Vec<&Stroke> = self.strokes.iter().filter(|s| s.index >= start && s.index < i).collect();
+            let strokes: Vec<&Stroke> = self
+                .strokes
+                .iter()
+                .filter(|s| s.index >= start && s.index < i)
+                .collect();
             let errors = strokes.iter().filter(|s| !s.correct()).count() as u32;
             let secs = match (
                 self.strokes.iter().rev().find(|s| s.index < start),
@@ -403,7 +448,11 @@ impl Session {
                 (Some(before), Some(last)) => last.at - before.at,
                 _ => 0.0,
             };
-            out.push(WordResult { word: self.target[start..i].iter().collect(), errors, secs });
+            out.push(WordResult {
+                word: self.target[start..i].iter().collect(),
+                errors,
+                secs,
+            });
         }
         out
     }
@@ -457,7 +506,10 @@ mod tests {
         let t0 = Instant::now();
         let mut s = Session::new("abc", ErrorMode::Backspace);
         type_str(&mut s, "ax", t0, 100);
-        assert_eq!(s.type_char_at('c', t0 + Duration::from_millis(300)), Outcome::Blocked);
+        assert_eq!(
+            s.type_char_at('c', t0 + Duration::from_millis(300)),
+            Outcome::Blocked
+        );
         s.backspace();
         type_str(&mut s, "bc", t0 + Duration::from_millis(400), 100);
         assert!(s.is_done());
@@ -475,7 +527,11 @@ mod tests {
         s.type_char_at('t', t0);
         s.type_char_at('h', t0 + Duration::from_millis(150));
         match s.type_char_at('e', t0 + Duration::from_millis(250)) {
-            Outcome::Typed { latency_ms, context, .. } => {
+            Outcome::Typed {
+                latency_ms,
+                context,
+                ..
+            } => {
                 assert!((latency_ms.unwrap() - 100.0).abs() < 1.0);
                 assert_eq!(context, vec!['t', 'h']);
             }
@@ -496,8 +552,15 @@ mod tests {
         type_str(&mut s, "{\n", Instant::now(), 100);
         assert_eq!(s.cursor(), 6);
         assert_eq!(s.expected(), Some('x'));
+        // Typing the indentation by habit is ignored, not an error.
+        assert_eq!(s.type_char_at(' ', Instant::now()), Outcome::Ignored);
+        assert_eq!(s.errors(), 0);
         s.backspace();
-        assert_eq!(s.cursor(), 1, "backspace removes the auto indent with the newline");
+        assert_eq!(
+            s.cursor(),
+            1,
+            "backspace removes the auto indent with the newline"
+        );
     }
 
     #[test]

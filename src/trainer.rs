@@ -53,9 +53,13 @@ impl Mode {
     pub fn description(self) -> &'static str {
         match self {
             Mode::Learn => "Adaptive lessons. Keys unlock one at a time as you master them.",
-            Mode::Review => "Spaced repetition of the keys, transitions and words you're about to forget.",
+            Mode::Review => {
+                "Spaced repetition of the keys, transitions and words you're about to forget."
+            }
             Mode::Ngrams => "Drill your slowest letter pairs and triples until they flow.",
-            Mode::Words => "Common words on every key. Punctuation, numbers and capitals in settings.",
+            Mode::Words => {
+                "Common words on every key. Punctuation, numbers and capitals in settings."
+            }
             Mode::Test => "A classic timed speed test.",
             Mode::Code => "Real code with brackets, symbols and indentation.",
             Mode::File => "Type through your own text, picking up where you left off.",
@@ -91,7 +95,15 @@ pub struct Drill {
 
 impl Drill {
     fn new(mode: Mode, text: String, title: impl Into<String>) -> Self {
-        Self { mode, text, title: title.into(), focus: None, time_limit: None, code: false, file_span: None }
+        Self {
+            mode,
+            text,
+            title: title.into(),
+            focus: None,
+            time_limit: None,
+            code: false,
+            file_span: None,
+        }
     }
 }
 
@@ -139,7 +151,11 @@ impl Markov {
 
     /// Probability of `next` given `ctx`, over the allowed letters plus word end.
     fn prob(&self, ctx: (usize, usize), next: usize, letters: &[usize]) -> f64 {
-        let total: f64 = letters.iter().chain([&EDGE]).map(|&l| self.weight(ctx, l) + SMOOTH).sum();
+        let total: f64 = letters
+            .iter()
+            .chain([&EDGE])
+            .map(|&l| self.weight(ctx, l) + SMOOTH)
+            .sum();
         (self.weight(ctx, next) + SMOOTH) / total
     }
 
@@ -154,7 +170,12 @@ impl Markov {
         lp / (w.len() + 1) as f64
     }
 
-    fn sample<R: Rng + ?Sized>(&self, letters: &[usize], focus: Option<usize>, rng: &mut R) -> Vec<usize> {
+    fn sample<R: Rng + ?Sized>(
+        &self,
+        letters: &[usize],
+        focus: Option<usize>,
+        rng: &mut R,
+    ) -> Vec<usize> {
         let target_len = rng.random_range(3..=7usize);
         let mut w: Vec<usize> = Vec::new();
         let mut ctx = (EDGE, EDGE);
@@ -179,7 +200,9 @@ impl Markov {
                 let push = if w.len() >= target_len { 20.0 } else { 0.3 };
                 options.push((EDGE, end * push));
             }
-            let Ok(&(next, _)) = options.choose_weighted(rng, |o| o.1) else { break };
+            let Ok(&(next, _)) = options.choose_weighted(rng, |o| o.1) else {
+                break;
+            };
             if next == EDGE || w.len() >= 9 {
                 break;
             }
@@ -195,7 +218,11 @@ impl Markov {
     fn word<R: Rng + ?Sized>(&self, allowed: &[char], focus: Option<char>, rng: &mut R) -> String {
         let letters: Vec<usize> = allowed.iter().filter_map(|&c| idx(c)).collect();
         let focus = focus.and_then(idx).filter(|f| letters.contains(f));
-        let vowels: Vec<usize> = "aeiouy".chars().filter_map(idx).filter(|v| letters.contains(v)).collect();
+        let vowels: Vec<usize> = "aeiouy"
+            .chars()
+            .filter_map(idx)
+            .filter(|v| letters.contains(v))
+            .collect();
         let ok = |w: &[usize], strict: bool| {
             w.len() >= if strict { 3 } else { 2 }
                 && (vowels.is_empty() || w.iter().any(|c| vowels.contains(c)))
@@ -212,11 +239,13 @@ impl Markov {
             if best.as_ref().is_none_or(|(b, _)| score > *b) {
                 best = Some((score, w));
             }
-            if attempt >= 8 && best.is_some() {
+            if attempt >= 16 && best.is_some() {
                 break;
             }
         }
-        let w = best.map(|(_, w)| w).unwrap_or_else(|| letters.iter().take(3).copied().collect());
+        let w = best
+            .map(|(_, w)| w)
+            .unwrap_or_else(|| letters.iter().take(3).copied().collect());
         w.iter().map(|&i| (b'a' + i as u8) as char).collect()
     }
 }
@@ -244,6 +273,10 @@ impl Trainer {
         Self { words, model }
     }
 
+    pub fn words(&self) -> &[&'static str] {
+        &self.words
+    }
+
     pub fn generate<R: Rng + ?Sized>(
         &self,
         mode: Mode,
@@ -259,7 +292,11 @@ impl Trainer {
             Mode::Ngrams => self.ngrams(layout, profile, opts, rng),
             Mode::Words => Drill::new(Mode::Words, self.words_text(opts.words, opts, rng), ""),
             Mode::Test => {
-                let mut d = Drill::new(Mode::Test, self.words_text(150, opts, rng), format!("{}s", opts.test_secs));
+                let mut d = Drill::new(
+                    Mode::Test,
+                    self.words_text(150, opts, rng),
+                    format!("{}s", opts.test_secs),
+                );
                 d.time_limit = Some(opts.test_secs as f64);
                 d
             }
@@ -273,7 +310,9 @@ impl Trainer {
     pub fn allowed(layout: &Layout, profile: &LayoutProfile, progressive: bool) -> Vec<char> {
         let order = layout.learning_order();
         let n = if progressive {
-            profile.unlocked.clamp(layout.initial_unlocked(), order.len())
+            profile
+                .unlocked
+                .clamp(layout.initial_unlocked(), order.len())
         } else {
             order.len()
         };
@@ -285,7 +324,11 @@ impl Trainer {
         match stat {
             None => 0.8,
             Some(s) => {
-                let forgetting = if s.memory.reps > 0 { 1.0 - s.memory.retrievability(now) } else { 0.3 };
+                let forgetting = if s.memory.reps > 0 {
+                    1.0 - s.memory.retrievability(now)
+                } else {
+                    0.3
+                };
                 s.weakness(target_ms) + 0.4 * forgetting
             }
         }
@@ -293,18 +336,23 @@ impl Trainer {
 
     /// The key a lesson should focus on: the newest key until it's
     /// mastered, otherwise whichever key most needs work.
-    pub fn focus_key(allowed: &[char], profile: &LayoutProfile, target_ms: f64, now: i64) -> Option<char> {
+    pub fn focus_key(
+        allowed: &[char],
+        profile: &LayoutProfile,
+        target_ms: f64,
+        now: i64,
+    ) -> Option<char> {
         let newest = *allowed.last()?;
         if !profile.key(newest).is_some_and(|s| s.mastered(target_ms)) {
             return Some(newest);
         }
-        allowed
-            .iter()
-            .copied()
-            .max_by(|a, b| {
-                Self::key_priority(profile.key(*a), target_ms, now)
-                    .total_cmp(&Self::key_priority(profile.key(*b), target_ms, now))
-            })
+        allowed.iter().copied().max_by(|a, b| {
+            Self::key_priority(profile.key(*a), target_ms, now).total_cmp(&Self::key_priority(
+                profile.key(*b),
+                target_ms,
+                now,
+            ))
+        })
     }
 
     fn pick_word<'a, R: Rng + ?Sized>(
@@ -313,7 +361,10 @@ impl Trainer {
         avoid: Option<&str>,
         rng: &mut R,
     ) -> Option<&'a str> {
-        let w = pool.choose_weighted(rng, |w| if Some(*w) == avoid { 0.0 } else { weight(w) }).ok().copied();
+        let w = pool
+            .choose_weighted(rng, |w| if Some(*w) == avoid { 0.0 } else { weight(w) })
+            .ok()
+            .copied();
         w.or_else(|| pool.choose(rng).copied())
     }
 
@@ -327,15 +378,29 @@ impl Trainer {
     ) -> Drill {
         let allowed = Self::allowed(layout, profile, opts.progressive);
         let focus = Self::focus_key(&allowed, profile, opts.target_ms, now);
-        let pool: Vec<&str> =
-            self.words.iter().copied().filter(|w| w.chars().all(|c| allowed.contains(&c))).collect();
+        let pool: Vec<&str> = self
+            .words
+            .iter()
+            .copied()
+            .filter(|w| w.chars().all(|c| allowed.contains(&c)))
+            .collect();
         // Mix in more real words as more keys unlock.
         let p_real = (pool.len() as f64 / 80.0).clamp(0.0, 0.8);
-        let priority: HashMap<char, f64> =
-            allowed.iter().map(|&c| (c, Self::key_priority(profile.key(c), opts.target_ms, now))).collect();
+        let priority: HashMap<char, f64> = allowed
+            .iter()
+            .map(|&c| (c, Self::key_priority(profile.key(c), opts.target_ms, now)))
+            .collect();
         let weight = |w: &str| {
-            let p: f64 = w.chars().map(|c| priority.get(&c).copied().unwrap_or(0.5)).sum::<f64>() / w.len() as f64;
-            let boost = if focus.is_some_and(|f| w.contains(f)) { 4.0 } else { 1.0 };
+            let p: f64 = w
+                .chars()
+                .map(|c| priority.get(&c).copied().unwrap_or(0.5))
+                .sum::<f64>()
+                / w.len() as f64;
+            let boost = if focus.is_some_and(|f| w.contains(f)) {
+                4.0
+            } else {
+                1.0
+            };
             (0.1 + p) * boost
         };
 
@@ -372,9 +437,16 @@ impl Trainer {
         let usable = |w: &str| w.chars().all(|c| allowed.contains(&c.to_ascii_lowercase()));
         let pool: Vec<&str> = self.words.iter().copied().filter(|w| usable(w)).collect();
 
-        let mut due_words: Vec<(&String, &WordStat)> =
-            profile.words.iter().filter(|(w, s)| s.memory.is_due(now) && usable(w)).collect();
-        due_words.sort_by(|a, b| a.1.memory.retrievability(now).total_cmp(&b.1.memory.retrievability(now)));
+        let mut due_words: Vec<(&String, &WordStat)> = profile
+            .words
+            .iter()
+            .filter(|(w, s)| s.memory.is_due(now) && usable(w))
+            .collect();
+        due_words.sort_by(|a, b| {
+            a.1.memory
+                .retrievability(now)
+                .total_cmp(&b.1.memory.retrievability(now))
+        });
         let due_grams: Vec<&String> = profile
             .bigrams
             .iter()
@@ -384,7 +456,9 @@ impl Trainer {
         let due_keys: Vec<char> = profile
             .keys
             .iter()
-            .filter(|(k, s)| allowed.contains(k) && s.memory.is_due(now) && s.weakness(opts.target_ms) > 0.35)
+            .filter(|(k, s)| {
+                allowed.contains(k) && s.memory.is_due(now) && s.weakness(opts.target_ms) > 0.35
+            })
             .map(|(k, _)| *k)
             .collect();
 
@@ -393,16 +467,29 @@ impl Trainer {
             items.push((*w).clone());
             items.push((*w).clone());
         }
-        let containing = |frag: &str| pool.iter().filter(|w| w.contains(frag)).copied().collect::<Vec<_>>();
+        let containing = |frag: &str| {
+            pool.iter()
+                .filter(|w| w.contains(frag))
+                .copied()
+                .collect::<Vec<_>>()
+        };
         for g in due_grams.iter().take(6) {
             let ws = containing(g);
             for _ in 0..2 {
-                items.push(ws.choose(rng).map(|w| w.to_string()).unwrap_or_else(|| self.model.word(&allowed, g.chars().next(), rng)));
+                items.push(
+                    ws.choose(rng)
+                        .map(|w| w.to_string())
+                        .unwrap_or_else(|| self.model.word(&allowed, g.chars().next(), rng)),
+                );
             }
         }
         for k in due_keys.iter().take(6) {
             let ws = containing(&k.to_string());
-            items.push(ws.choose(rng).map(|w| w.to_string()).unwrap_or_else(|| self.model.word(&allowed, Some(*k), rng)));
+            items.push(
+                ws.choose(rng)
+                    .map(|w| w.to_string())
+                    .unwrap_or_else(|| self.model.word(&allowed, Some(*k), rng)),
+            );
         }
 
         let title = if items.is_empty() {
@@ -412,7 +499,16 @@ impl Trainer {
         };
         if items.len() < opts.words {
             // Top up with weakest-key practice.
-            let rest = self.learn(layout, profile, &Options { words: opts.words - items.len(), ..opts.clone() }, now, rng);
+            let rest = self.learn(
+                layout,
+                profile,
+                &Options {
+                    words: opts.words - items.len(),
+                    ..opts.clone()
+                },
+                now,
+                rng,
+            );
             items.extend(rest.text.split(' ').map(String::from));
         }
         let items = spread(items, rng);
@@ -421,7 +517,13 @@ impl Trainer {
 
     /// Weakest bigrams/trigrams with enough samples, or (with no data yet)
     /// common English pairs that are awkward on this layout.
-    pub fn weak_ngrams(&self, layout: &Layout, profile: &LayoutProfile, allowed: &[char], target_ms: f64) -> Vec<String> {
+    pub fn weak_ngrams(
+        &self,
+        layout: &Layout,
+        profile: &LayoutProfile,
+        allowed: &[char],
+        target_ms: f64,
+    ) -> Vec<String> {
         let ok = |g: &str| g.chars().all(|c| allowed.contains(&c));
         let rank = |m: &BTreeMap<String, Stat>, min: u32| {
             let mut v: Vec<(&String, f64)> = m
@@ -470,15 +572,29 @@ impl Trainer {
         grams
     }
 
-    fn ngrams<R: Rng + ?Sized>(&self, layout: &Layout, profile: &LayoutProfile, opts: &Options, rng: &mut R) -> Drill {
+    fn ngrams<R: Rng + ?Sized>(
+        &self,
+        layout: &Layout,
+        profile: &LayoutProfile,
+        opts: &Options,
+        rng: &mut R,
+    ) -> Drill {
         let allowed = Self::allowed(layout, profile, opts.progressive);
         let grams = self.weak_ngrams(layout, profile, &allowed, opts.target_ms);
-        let pool: Vec<&str> =
-            self.words.iter().copied().filter(|w| w.chars().all(|c| allowed.contains(&c))).collect();
+        let pool: Vec<&str> = self
+            .words
+            .iter()
+            .copied()
+            .filter(|w| w.chars().all(|c| allowed.contains(&c)))
+            .collect();
         let per = (opts.words / grams.len().max(1)).max(4);
         let mut out: Vec<String> = Vec::new();
         for g in &grams {
-            let with: Vec<&str> = pool.iter().copied().filter(|w| w.contains(g.as_str())).collect();
+            let with: Vec<&str> = pool
+                .iter()
+                .copied()
+                .filter(|w| w.contains(g.as_str()))
+                .collect();
             out.push(g.clone());
             for i in 0..per {
                 let w = match with.choose(rng) {
@@ -512,7 +628,9 @@ impl Trainer {
             let mut w = if opts.numbers && rng.random_bool(0.08) {
                 rng.random_range(1..10_000u32).to_string()
             } else {
-                let Some(w) = Self::pick_word(&self.words, |_| 1.0, out.last().map(String::as_str), rng) else {
+                let Some(w) =
+                    Self::pick_word(&self.words, |_| 1.0, out.last().map(String::as_str), rng)
+                else {
                     break;
                 };
                 w.to_string()
@@ -547,10 +665,21 @@ impl Trainer {
     }
 
     fn code<R: Rng + ?Sized>(&self, lang: &str, rng: &mut R) -> Drill {
-        let pool: Vec<_> = SNIPPETS.iter().filter(|s| lang == "any" || s.lang == lang).collect();
-        let pool = if pool.is_empty() { SNIPPETS.iter().collect() } else { pool };
+        let pool: Vec<_> = SNIPPETS
+            .iter()
+            .filter(|s| lang == "any" || s.lang == lang)
+            .collect();
+        let pool = if pool.is_empty() {
+            SNIPPETS.iter().collect()
+        } else {
+            pool
+        };
         let s = pool.choose(rng).expect("snippets are non-empty");
-        let mut d = Drill::new(Mode::Code, s.code.to_string(), s.lang);
+        let mut d = Drill::new(
+            Mode::Code,
+            s.code.to_string(),
+            format!("{} snippet", content::language_name(s.lang)),
+        );
         d.code = true;
         d
     }
@@ -561,7 +690,11 @@ impl Trainer {
         let (s, e) = content::chunk(text, offset, approx, code);
         let passage: String = text.chars().skip(s).take(e - s).collect();
         let total = text.chars().count().max(1);
-        let mut d = Drill::new(Mode::File, passage.trim().to_string(), format!("{name} · {}%", s * 100 / total));
+        let mut d = Drill::new(
+            Mode::File,
+            passage.trim().to_string(),
+            format!("{name} · {}%", s * 100 / total),
+        );
         d.code = code;
         d.file_span = Some((s, e));
         d
@@ -570,7 +703,9 @@ impl Trainer {
 
 fn capitalize(w: &str) -> String {
     let mut cs = w.chars();
-    cs.next().map(|f| f.to_uppercase().chain(cs).collect()).unwrap_or_default()
+    cs.next()
+        .map(|f| f.to_uppercase().chain(cs).collect())
+        .unwrap_or_default()
 }
 
 /// Shuffles so repeated items aren't adjacent when avoidable.
@@ -578,23 +713,32 @@ fn spread<R: Rng + ?Sized>(mut items: Vec<String>, rng: &mut R) -> Vec<String> {
     use rand::seq::SliceRandom;
     items.shuffle(rng);
     for i in 1..items.len() {
-        if items[i] == items[i - 1] {
-            if let Some(j) = (i + 1..items.len()).find(|&j| items[j] != items[i]) {
-                items.swap(i, j);
-            }
+        if items[i] == items[i - 1]
+            && let Some(j) = (i + 1..items.len()).find(|&j| items[j] != items[i])
+        {
+            items.swap(i, j);
         }
     }
     items
 }
 
 /// If every unlocked key is mastered, unlocks the next one.
-pub fn try_unlock(layout: &Layout, profile: &mut LayoutProfile, target_ms: f64, now: i64) -> Option<char> {
+pub fn try_unlock(
+    layout: &Layout,
+    profile: &mut LayoutProfile,
+    target_ms: f64,
+    now: i64,
+) -> Option<char> {
     let order = layout.learning_order();
-    profile.unlocked = profile.unlocked.clamp(layout.initial_unlocked(), order.len());
+    profile.unlocked = profile
+        .unlocked
+        .clamp(layout.initial_unlocked(), order.len());
     if profile.unlocked >= order.len() {
         return None;
     }
-    let all_mastered = order[..profile.unlocked].iter().all(|&c| profile.key(c).is_some_and(|s| s.mastered(target_ms)));
+    let all_mastered = order[..profile.unlocked]
+        .iter()
+        .all(|&c| profile.key(c).is_some_and(|s| s.mastered(target_ms)));
     if !all_mastered {
         return None;
     }
@@ -610,7 +754,9 @@ pub fn apply_reviews(profile: &mut LayoutProfile, session: &Session, target_ms: 
     let mut per_key: HashMap<char, (u32, u32)> = HashMap::new();
     for s in &session.strokes {
         if s.expected.is_alphanumeric() {
-            let e = per_key.entry(s.expected.to_lowercase().next().unwrap_or(s.expected)).or_default();
+            let e = per_key
+                .entry(s.expected.to_lowercase().next().unwrap_or(s.expected))
+                .or_default();
             e.0 += 1;
             e.1 += u32::from(!s.correct());
         }
@@ -630,7 +776,9 @@ pub fn apply_reviews(profile: &mut LayoutProfile, session: &Session, target_ms: 
     let mut seen: HashMap<String, u32> = HashMap::new();
     for p in session.target.windows(2) {
         if p[0].is_alphabetic() && p[1].is_alphabetic() {
-            *seen.entry(p.iter().flat_map(|c| c.to_lowercase()).collect()).or_default() += 1;
+            *seen
+                .entry(p.iter().flat_map(|c| c.to_lowercase()).collect())
+                .or_default() += 1;
         }
     }
     for (g, n) in seen {
@@ -650,7 +798,10 @@ pub fn apply_reviews(profile: &mut LayoutProfile, session: &Session, target_ms: 
     }
     let avg = results.iter().map(|w| w.wpm()).sum::<f64>() / results.len() as f64;
     for w in results {
-        let word = w.word.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        let word = w
+            .word
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
         if word.chars().count() < 2 {
             continue;
         }
@@ -663,7 +814,11 @@ pub fn apply_reviews(profile: &mut LayoutProfile, session: &Session, target_ms: 
                 ws.memory.review(now, if trouble { 0.2 } else { 0.9 });
             }
             None if trouble => {
-                let mut ws = WordStat { attempts: 1, misses: 1, ..Default::default() };
+                let mut ws = WordStat {
+                    attempts: 1,
+                    misses: 1,
+                    ..Default::default()
+                };
                 ws.memory.review(now, 0.2);
                 profile.words.insert(word, ws);
             }
@@ -695,7 +850,10 @@ mod tests {
     }
 
     fn qwerty() -> Layout {
-        layout::builtin().into_iter().find(|l| l.id == "qwerty").unwrap()
+        layout::builtin()
+            .into_iter()
+            .find(|l| l.id == "qwerty")
+            .unwrap()
     }
 
     #[test]
@@ -707,7 +865,12 @@ mod tests {
             let allowed = Trainer::allowed(&l, &p, true);
             let d = t.generate(Mode::Learn, &l, &p, &opts(), 0, &mut rng);
             assert_eq!(d.text.split(' ').count(), 25, "{}", l.id);
-            assert!(d.text.chars().all(|c| c == ' ' || allowed.contains(&c)), "{}: {}", l.id, d.text);
+            assert!(
+                d.text.chars().all(|c| c == ' ' || allowed.contains(&c)),
+                "{}: {}",
+                l.id,
+                d.text
+            );
             assert_eq!(d.focus, allowed.last().copied());
         }
     }
@@ -717,7 +880,9 @@ mod tests {
         let t = Trainer::new();
         let mut rng = StdRng::seed_from_u64(1);
         let allowed: Vec<char> = "asdfghjkle".chars().collect();
-        let hits = (0..50).filter(|_| t.model.word(&allowed, Some('e'), &mut rng).contains('e')).count();
+        let hits = (0..50)
+            .filter(|_| t.model.word(&allowed, Some('e'), &mut rng).contains('e'))
+            .count();
         assert!(hits > 40, "{hits}");
     }
 
@@ -744,12 +909,27 @@ mod tests {
         let l = qwerty();
         let p = LayoutProfile::default();
         let mut rng = StdRng::seed_from_u64(3);
-        let o = Options { punctuation: true, numbers: true, capitals: true, ..opts() };
-        for m in [Mode::Learn, Mode::Review, Mode::Ngrams, Mode::Words, Mode::Test, Mode::Code] {
+        let o = Options {
+            punctuation: true,
+            numbers: true,
+            capitals: true,
+            ..opts()
+        };
+        for m in [
+            Mode::Learn,
+            Mode::Review,
+            Mode::Ngrams,
+            Mode::Words,
+            Mode::Test,
+            Mode::Code,
+        ] {
             let d = t.generate(m, &l, &p, &o, 0, &mut rng);
             assert!(!d.text.trim().is_empty(), "{m:?}");
         }
-        assert_eq!(t.generate(Mode::Test, &l, &p, &o, 0, &mut rng).time_limit, Some(30.0));
+        assert_eq!(
+            t.generate(Mode::Test, &l, &p, &o, 0, &mut rng).time_limit,
+            Some(30.0)
+        );
         assert!(t.generate(Mode::Code, &l, &p, &o, 0, &mut rng).code);
     }
 
@@ -767,8 +947,19 @@ mod tests {
         let later = 86_400;
         assert!(p.words["ask"].memory.is_due(later));
         let t = Trainer::new();
-        let d = t.generate(Mode::Review, &l, &p, &opts(), later, &mut StdRng::seed_from_u64(2));
-        assert!(d.text.split(' ').filter(|w| *w == "ask").count() >= 2, "{}", d.text);
+        let d = t.generate(
+            Mode::Review,
+            &l,
+            &p,
+            &opts(),
+            later,
+            &mut StdRng::seed_from_u64(2),
+        );
+        assert!(
+            d.text.split(' ').filter(|w| *w == "ask").count() >= 2,
+            "{}",
+            d.text
+        );
     }
 
     #[test]
