@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     symbols::Marker,
     text::{Line, Span},
     widgets::{Axis, Chart, Dataset, GraphType, Paragraph},
 };
 
-use super::{bar, fmt_secs, hints, key_label, keyboard, panel, theme::Theme};
+use super::{bar, fmt_secs, hints, key_label, keyboard, panel, pill, theme::Theme};
 use crate::{
     analytics,
     app::{App, STATS_TABS},
@@ -32,15 +32,16 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("  "),
     ];
     for (i, name) in STATS_TABS.iter().enumerate() {
-        let style = if i == app.stats_tab {
-            Style::new()
-                .bg(theme.accent.c())
-                .fg(theme.bg.c())
-                .add_modifier(Modifier::BOLD)
+        if i == app.stats_tab {
+            spans.extend(pill(
+                format!("{} {name}", i + 1),
+                theme.bg,
+                theme.accent,
+                true,
+            ));
         } else {
-            theme.dim()
-        };
-        spans.push(Span::styled(format!(" {} {name} ", i + 1), style));
+            spans.push(Span::styled(format!(" {} {name} ", i + 1), theme.dim()));
+        }
         spans.push(Span::raw(" "));
     }
     f.render_widget(Line::from(spans), tabs);
@@ -86,6 +87,7 @@ fn line_chart<'a>(
     let lab = |s: String| Span::styled(s, theme.faint());
     Chart::new(sets)
         .block(panel(title, theme))
+        .style(Style::new().bg(theme.panel.c()))
         .x_axis(
             Axis::default()
                 .bounds([0.0, max_x.max(1.0)])
@@ -253,6 +255,7 @@ fn keys(f: &mut Frame, area: Rect, app: &App) {
             ripples: &[],
             allowed: None,
             numbers: true,
+            last_miss: None,
         };
         keyboard::draw_large(f.buffer_mut(), kb, app, &opts);
     }

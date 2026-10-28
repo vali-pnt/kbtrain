@@ -1,5 +1,6 @@
-//! On-screen keyboard: finger-zoned keys with a heatmap of the learner's
-//! weakness, the next key highlighted, and a ripple on each press.
+//! On-screen keyboard: solid keycaps tinted by finger zone, labels coloured
+//! by the learner's weakness, the next key lit, and presses that sink the
+//! cap and send a ripple across the board.
 
 use std::time::Instant;
 
@@ -30,6 +31,8 @@ pub struct Opts<'a> {
     /// Keys still locked by progressive unlocking are drawn dim.
     pub allowed: Option<&'a [char]>,
     pub numbers: bool,
+    /// Seconds since the last mistake (the wanted key insists after one).
+    pub last_miss: Option<f64>,
 }
 
 /// Rows of text the large keyboard needs.
@@ -75,36 +78,59 @@ impl Painter<'_> {
         }
     }
 
-    /// A rounded key cap `w` cells wide and 3 tall.
-    #[allow(clippy::too_many_arguments)]
-    fn cap(
-        &mut self,
-        x: u16,
-        y: u16,
-        w: u16,
-        label: &str,
-        border: Rgb,
-        label_fg: Rgb,
-        fill: Option<Rgb>,
-        bump: bool,
-    ) {
+    /// A keycap `w` cells wide and 3 tall: a face with half-cell rounded
+    /// edges and a darker lip below. A pressed cap sinks half a cell.
+    fn cap(&mut self, x: u16, y: u16, w: u16, label: &str, look: &KeyLook) {
         if w < 3 {
             return;
         }
         let inner = (w - 2) as usize;
-        let mid = inner / 2;
-        let top = format!("╭{}╮", "─".repeat(inner));
-        let bottom: String = if bump {
-            let mut s: Vec<char> = "─".repeat(inner).chars().collect();
-            s[mid] = '━';
-            format!("╰{}╯", s.into_iter().collect::<String>())
+        let face = look.face;
+        let lip = if self.theme.is_light() {
+            face.lerp(Rgb(0, 0, 0), 0.25)
         } else {
-            format!("╰{}╯", "─".repeat(inner))
+            face.lerp(Rgb(0, 0, 0), 0.5)
         };
-        self.put(x, y, &top, border, None, false);
-        self.put(x, y + 2, &bottom, border, None, false);
-        self.put(x, y + 1, "│", border, None, false);
-        self.put(x + w - 1, y + 1, "│", border, None, false);
+        let (top, bottom, bottom_fg) = if look.sunk {
+            (
+                " ".repeat(w as usize),
+                format!("▝{}▘", "▀".repeat(inner)),
+                face,
+            )
+        } else {
+            (
+                format!("▗{}▖", "▄".repeat(inner)),
+                format!("▝{}▘", "▀".repeat(inner)),
+                lip,
+            )
+        };
+        let edge = |p: &mut Self, yy: u16, s: &str, fg: Rgb| {
+            let area = p.buf.area;
+            let fg = p.col(fg).c();
+            for (cx, ch) in (x..).zip(s.chars()) {
+                if cx >= area.right() || yy >= area.bottom() {
+                    break;
+                }
+                if let Some(cell) = p.buf.cell_mut((cx, yy)) {
+                    if ch == ' ' {
+                        cell.set_char(' ');
+                    } else {
+                        cell.set_char(ch).set_fg(fg);
+                    }
+                }
+            }
+        };
+        edge(self, y, &top, look.rim.unwrap_or(face));
+        edge(self, y + 2, &bottom, bottom_fg);
+        self.put(x, y + 1, "▐", face, None, false);
+        self.put(x + w - 1, y + 1, "▌", face, None, false);
+        if look.bump {
+            // The home-row nub, drawn into the lip.
+            let mid = x + 1 + (inner as u16) / 2;
+            if !look.sunk {
+                self.put(mid, y + 2, "▀", lip.lerp(self.theme.fg, 0.35), None, false);
+            }
+        }
         let lw = label.chars().count().min(inner);
         let lpad = (inner - lw).div_ceil(2);
         let text: String = format!(
@@ -113,15 +139,19 @@ impl Painter<'_> {
             label.chars().take(inner).collect::<String>(),
             " ".repeat(inner - lw - lpad)
         );
-        self.put(x + 1, y + 1, &text, label_fg, fill, fill.is_some());
+        self.put(x + 1, y + 1, &text, look.label, Some(face), look.bold);
     }
 }
 
 /// Visual state shared by both keyboard styles.
 struct KeyLook {
-    border: Rgb,
+    face: Rgb,
+    /// Light catching the cap's top edge (the press ripple).
+    rim: Option<Rgb>,
     label: Rgb,
-    fill: Option<Rgb>,
+    bold: bool,
+    sunk: bool,
+    bump: bool,
 }
 
 fn look(
@@ -136,49 +166,61 @@ fn look(
     let locked = key.ch.is_ascii_lowercase() && opts.allowed.is_some_and(|a| !a.contains(&key.ch));
     let stat = app.lp().key(key.ch);
     let zone = theme.finger(key.finger);
+    let anim = app.animations();
     let mut look = KeyLook {
-        border: theme.fade(zone, if locked { 0.18 } else { 0.5 }),
+        face: if locked {
+            theme.bg.lerp(theme.panel, 0.6)
+        } else {
+            theme.panel.lerp(zone, 0.14)
+        },
         label: match stat {
             _ if locked => theme.faint,
             Some(s) if s.count() > 0 => theme.heat(s.weakness(target)),
             _ => theme.dim,
         },
-        fill: None,
+        rim: None,
+        bold: false,
+        sunk: false,
+        bump: key.home && matches!(key.finger, Finger::LIndex | Finger::RIndex),
     };
 
     let is_next = opts.next.is_some_and(|n| n == key.ch || n == key.shift);
     if is_next {
-        let pulse = if app.animations() == Animations::Off {
-            0.5
-        } else {
-            (app.t * 5.0).sin() * 0.5 + 0.5
+        // After a mistake the wanted key flashes urgently for a moment.
+        let urgent = opts.last_miss.is_some_and(|a| a < 0.6);
+        let pulse = match anim {
+            Animations::Off => 0.5,
+            _ if urgent => (app.t * 22.0).sin() * 0.5 + 0.5,
+            _ => (app.t * 5.0).sin() * 0.5 + 0.5,
         };
-        look.border = theme.accent.lerp(theme.accent3, pulse * 0.4);
-        look.fill = Some(theme.fade(theme.accent, 0.45 + 0.25 * pulse));
-        look.label = theme.fg;
+        look.face = theme.accent.lerp(theme.fg, pulse * 0.3);
+        look.label = theme.bg;
+        look.bold = true;
     }
 
-    // Ripples: a ring expanding from each pressed key.
-    let anim = app.animations();
     for r in opts.ripples {
         let age = (now - r.at).as_secs_f64();
         let hit = r.ch == key.ch || r.ch == key.shift;
         let color = if r.ok { theme.good } else { theme.bad };
-        if hit && age < 0.15 {
-            look.fill = Some(theme.fade(color, 0.7));
-            look.label = theme.bg;
+        if hit && age < 0.14 {
+            look.sunk = anim != Animations::Off;
+            look.face = look.face.lerp(color, if r.ok { 0.55 } else { 0.9 });
+            look.label = if r.ok { theme.bg } else { theme.fg };
+        } else if hit && !r.ok && age < 0.45 {
+            look.face = look.face.lerp(theme.bad, 0.6 * (1.0 - age / 0.45));
         }
         if anim != Animations::Full {
             continue;
         }
+        // A ring spreading from the pressed key catches each cap's rim.
         let (Some((px, py)), Some((kx, ky))) = (centers(r.ch), centers(key.ch)) else {
             continue;
         };
         let d = ((px - kx).powi(2) + ((py - ky) * 1.1).powi(2)).sqrt();
-        let radius = age * 9.0;
-        let ring = (1.0 - (d - radius).abs() / 1.2).max(0.0) * (1.0 - age / 0.6).max(0.0);
-        if ring > 0.0 {
-            look.border = look.border.lerp(color, ring * 0.9);
+        let radius = age * 14.0;
+        let ring = (1.0 - (d - radius).abs() / 1.3).max(0.0) * (1.0 - age / 0.4).max(0.0);
+        if ring > 0.0 && d > 0.5 {
+            look.rim = Some(look.face.lerp(color, ring * 0.8));
         }
     }
     look
@@ -218,60 +260,27 @@ pub fn draw_large(buf: &mut Buffer, area: Rect, app: &App, opts: &Opts) {
             break;
         }
         let lead = (LEAD[ri] * unit as f64).round() as u16;
-        let mod_style = theme.fade(theme.faint, 0.9);
         if lead >= 3 {
-            let mut border = mod_style;
-            let mut fill = None;
             // Left shift lights up when the next key needs it (opposite hand).
-            if ri == 3 && next_shift_hand == Some(Hand::Right) {
-                border = theme.accent;
-                fill = Some(theme.fade(theme.accent, 0.4));
-            }
-            p.cap(x0, y, lead, LEAD_LABEL[ri], border, theme.dim, fill, false);
+            let lit = ri == 3 && next_shift_hand == Some(Hand::Right);
+            p.cap(x0, y, lead, LEAD_LABEL[ri], &modifier(theme, lit));
         }
         for key in row {
             let x = x0 + lead + key.col as u16 * unit;
             let l = look(app, key, opts, now, &centers);
-            let bump = key.home && matches!(key.finger, Finger::LIndex | Finger::RIndex);
             let label = if opts.next == Some(key.shift) && key.shift != key.ch {
                 key.shift
             } else {
                 key.ch
             };
-            p.cap(
-                x,
-                y,
-                unit,
-                &label.to_string(),
-                l.border,
-                l.label,
-                l.fill,
-                bump,
-            );
+            p.cap(x, y, unit, &label.to_string(), &l);
         }
         let used = lead + row.len() as u16 * unit;
         let trail = total_w.saturating_sub(used);
         if trail >= 3 {
-            let mut border = mod_style;
-            let mut fill = None;
-            if ri == 3 && next_shift_hand == Some(Hand::Left) {
-                border = theme.accent;
-                fill = Some(theme.fade(theme.accent, 0.4));
-            }
-            if ri == 2 && opts.next == Some('\n') {
-                border = theme.accent;
-                fill = Some(theme.fade(theme.accent, 0.4));
-            }
-            p.cap(
-                x0 + used,
-                y,
-                trail,
-                TRAIL_LABEL[ri],
-                border,
-                theme.dim,
-                fill,
-                false,
-            );
+            let lit = (ri == 3 && next_shift_hand == Some(Hand::Left))
+                || (ri == 2 && opts.next == Some('\n'));
+            p.cap(x0 + used, y, trail, TRAIL_LABEL[ri], &modifier(theme, lit));
         }
     }
 
@@ -290,25 +299,26 @@ pub fn draw_large(buf: &mut Buffer, area: Rect, app: &App, opts: &Opts) {
             home: false,
         };
         let mut l = look(app, &space_key, opts, now, &|_| None);
-        l.border = if opts.next == Some(' ') {
-            l.border
+        if opts.next != Some(' ') && !l.sunk {
+            l.label = theme.faint;
+        }
+        p.cap(sx, y, sw, "space", &l);
+    }
+}
+
+/// A modifier key: plain, or lit when the next character needs it.
+fn modifier(theme: &Theme, lit: bool) -> KeyLook {
+    KeyLook {
+        face: if lit {
+            theme.accent
         } else {
-            theme.fade(theme.finger(Finger::Thumb), 0.4)
-        };
-        p.cap(
-            sx,
-            y,
-            sw,
-            "space",
-            l.border,
-            if l.fill.is_some() {
-                theme.fg
-            } else {
-                theme.dim
-            },
-            l.fill,
-            false,
-        );
+            theme.bg.lerp(theme.panel, 0.8)
+        },
+        label: if lit { theme.bg } else { theme.faint },
+        rim: None,
+        bold: lit,
+        sunk: false,
+        bump: false,
     }
 }
 
@@ -333,16 +343,14 @@ pub fn draw_compact(buf: &mut Buffer, area: Rect, app: &App, opts: &Opts) {
         for key in row {
             let x = x0 + stagger[ri] + key.col as u16 * 4;
             let l = look(app, key, opts, now, &|_| None);
-            let bg = l.fill.unwrap_or_else(|| theme.fade(l.label, 0.35));
-            let fg = if l.fill.is_some() { theme.bg } else { theme.fg };
-            p.put(
-                x,
-                y,
-                &format!(" {} ", key.ch),
-                fg,
-                Some(bg),
-                l.fill.is_some(),
-            );
+            let lit = l.bold || l.sunk;
+            let bg = if lit {
+                l.face
+            } else {
+                theme.fade(l.label, 0.35)
+            };
+            let fg = if lit { l.label } else { theme.fg };
+            p.put(x, y, &format!(" {} ", key.ch), fg, Some(bg), lit);
         }
     }
 }

@@ -32,9 +32,19 @@ and late successes push it furthest (the spacing effect).
 trigrams. With no data yet, it starts with common pairs that are awkward on
 your layout, such as same-finger bigrams.
 
-**Keeps you going.** You get personal-best tracking per mode with sparklines
-and fireworks, a flow combo meter, a daily goal, and a streak calendar. There
-are no leaderboards: you only compete with yourself.
+**Keeps you going.** You get personal-best tracking per mode with sparklines,
+a flow combo meter, a daily goal, and a streak calendar. There are no
+leaderboards: you only compete with yourself.
+
+**Reacts to how you type.** Letters glow white-hot as you hit them and cool
+into place, a clean word gets a sweep of light, and the room warms as your
+combo climbs through *flow*, *surge*, *overdrive* and *transcendent*. A
+mistake does the opposite: the letter glitches, the line shakes its head, red
+bleeds in from the screen edges, and a broken combo crumbles and falls. A run
+of misses earns a "slow down". On the results screen your speed gathers out
+of scattered dust; a personal best lights an aurora, while a run under 90%
+accuracy drains the colour from everything except your mistakes and leaves
+the number sputtering like failing neon.
 
 ## Modes
 
@@ -55,8 +65,9 @@ Typographic quotes and dashes are converted to keyboard characters.
 ## The screen
 
 - **On-screen keyboard** in four styles, cycled with `Ctrl+K`:
-  - *large:* finger-zoned keys with a heatmap of your weak spots, the next key
-    pulsing, and a ripple on each press.
+  - *large:* solid keycaps tinted by finger zone, labels showing your weak
+    spots, the next key lit, and presses that sink the cap and send a ripple
+    of light across the key rims.
   - *adaptive:* fades away while you type fluently and returns when you
     hesitate or make a mistake.
   - *compact:* a one-line-per-row heat strip.
@@ -65,7 +76,7 @@ Typographic quotes and dashes are converted to keyboard characters.
 - **Errors** are shown in red and corrected ones in amber. Choose how mistakes
   behave: *continue*, *stop on error*, or *must backspace*.
 - **Results** show speed, accuracy, raw speed, consistency, max combo, a
-  per-second speed chart with error markers, missed keys, and the words queued
+  verdict in words, a per-second speed chart with error markers, missed keys, and the words queued
   for review.
 - **Stats** has five tabs: progress charts, key heatmap, bigram heat matrix,
   finger and hand analysis (load, speed, alternation, same-finger rate), and
@@ -147,4 +158,6 @@ links, set `animations = "reduced"`.
 ```
 cargo test                    # unit tests plus render tests at many sizes
 cargo test dump_screens -- --ignored --nocapture   # print every screen
+KBTRAIN_DUMP_HTML=out cargo test dump_screens -- --ignored  # screens and animation moments as HTML
+cargo test --release redraw_cost -- --ignored --nocapture  # bytes sent to the terminal
 ```

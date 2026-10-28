@@ -16,7 +16,7 @@ use crate::{
     stats::{LayoutProfile, Profile, SessionRecord, now_ts, today, wpm_to_latency},
     trainer::{self, Drill, Mode, Options, Trainer},
     ui::{
-        fx::Particles,
+        fx::{self, Feedback, Tween},
         theme::{THEMES, Theme},
     },
 };
@@ -107,8 +107,14 @@ pub struct App {
     pub stats_tab: usize,
     pub settings_sel: usize,
     pub confirm_reset: bool,
-    pub particles: Particles,
     pub ripples: Vec<Ripple>,
+    /// Traces of recent presses for the drill screen's animations.
+    pub fb: Feedback,
+    /// The menu selection marker, gliding between rows.
+    pub menu_pos: Tween,
+    /// When the current screen appeared (screens fade in).
+    pub screen_at: Instant,
+    shown_screen: Screen,
     /// Opacity of the adaptive keyboard, animated toward its target.
     pub kb_alpha: f64,
     /// Seconds since launch; drives all animation.
@@ -169,8 +175,11 @@ impl App {
             stats_tab: 0,
             settings_sel: 0,
             confirm_reset: false,
-            particles: Particles::default(),
             ripples: Vec::new(),
+            fb: Feedback::default(),
+            menu_pos: Tween::new(0.0, 0.16),
+            screen_at: now,
+            shown_screen: Screen::Home,
             kb_alpha: 1.0,
             t: 0.0,
             start: now,
@@ -296,7 +305,8 @@ impl App {
             (Animations::Off, _) => 250,
             (Animations::Reduced, _) => 50,
             (Animations::Full, Screen::Typing) => 33,
-            (Animations::Full, Screen::Home) => 50,
+            // The ambient backdrop is slow; only the menu marker needs speed.
+            (Animations::Full, Screen::Home) if !self.menu_pos.moving() => 50,
             (Animations::Full, _) => 33,
         };
         Duration::from_millis(ms)
@@ -307,7 +317,12 @@ impl App {
         let dt = (now - self.last_tick).as_secs_f64().min(0.1);
         self.last_tick = now;
         self.t = (now - self.start).as_secs_f64();
-        self.particles.update(dt, 18.0);
+        self.fb.prune();
+        self.menu_pos.set(self.menu_sel as f64);
+        if self.screen != self.shown_screen {
+            self.shown_screen = self.screen;
+            self.screen_at = now;
+        }
         self.ripples
             .retain(|r| r.at.elapsed() < Duration::from_millis(700));
         if self
@@ -481,8 +496,7 @@ impl App {
         self.session = s;
         self.drill = drill;
         self.ripples.clear();
-        // Keep drills calm: no leftover celebration.
-        self.particles.list.clear();
+        self.fb = Feedback::default();
         self.kb_alpha = 1.0;
         self.screen = Screen::Typing;
     }
@@ -527,9 +541,9 @@ impl App {
             KeyCode::F(2) => self.cycle_keyboard(),
             KeyCode::Char('t') if ctrl => self.cycle_theme(),
             KeyCode::F(3) => self.cycle_theme(),
-            KeyCode::Backspace if ctrl || alt => self.session.backspace_word(),
-            KeyCode::Char('w' | 'h') if ctrl => self.session.backspace_word(),
-            KeyCode::Backspace => self.session.backspace(),
+            KeyCode::Backspace if ctrl || alt => self.erase(Session::backspace_word),
+            KeyCode::Char('w' | 'h') if ctrl => self.erase(Session::backspace_word),
+            KeyCode::Backspace => self.erase(Session::backspace),
             KeyCode::Enter => {
                 if self.session.expected() == Some('\n') {
                     self.type_char('\n');
@@ -540,24 +554,49 @@ impl App {
         }
     }
 
+    fn erase(&mut self, how: fn(&mut Session)) {
+        let before = self.session.cursor();
+        how(&mut self.session);
+        if self.session.cursor() != before {
+            self.fb.caret_from = (before, Instant::now());
+        }
+    }
+
     fn type_char(&mut self, c: char) {
         self.type_char_at(c, Instant::now());
     }
 
     pub(crate) fn type_char_at(&mut self, c: char, now: Instant) {
+        let before = self.session.cursor();
+        let tier = fx::tier_of(self.session.combo);
         match self.session.type_char_at(c, now) {
             Outcome::Typed {
+                index,
                 expected,
                 correct,
                 latency_ms,
                 context,
-                ..
             } => {
                 self.lp_mut()
                     .record(expected, correct, latency_ms, &context);
+                // Feedback timestamps use the real clock so replayed input
+                // (tests) never lands in the future.
+                let at = now.min(Instant::now());
+                self.fb.caret_from = (before, at);
+                if correct {
+                    self.fb.hits.push((index, at));
+                    self.note_word(index, expected, at);
+                    let new_tier = fx::tier_of(self.session.combo);
+                    if new_tier > tier {
+                        self.fb.tier_up = Some((new_tier, at));
+                    }
+                } else {
+                    self.fb.misses.push((index, at));
+                    self.fb.tier_up = None;
+                }
                 self.ripples.push(Ripple {
                     ch: c,
-                    at: now.min(Instant::now()),
+                    at,
                     ok: correct,
                 });
                 if !correct {
@@ -569,6 +608,26 @@ impl App {
             }
             Outcome::Blocked => self.bell(),
             Outcome::Ignored => {}
+        }
+    }
+
+    /// A word just ended cleanly (a space after it, or the end of the text)?
+    /// Queue a light sweep across it.
+    fn note_word(&mut self, index: usize, typed: char, at: Instant) {
+        let s = &self.session;
+        let end = if typed.is_whitespace() {
+            index
+        } else if s.is_done() {
+            index + 1
+        } else {
+            return;
+        };
+        let start = s.target[..end]
+            .iter()
+            .rposition(|c| c.is_whitespace())
+            .map_or(0, |p| p + 1);
+        if end >= start + 2 && !s.ever_wrong[start..end].contains(&true) {
+            self.fb.words.push((start, end, at));
         }
     }
 
@@ -674,30 +733,8 @@ impl App {
             goal_before,
             at: Instant::now(),
         };
-        if self.config.animations != Animations::Off
-            && (results.is_pb() || results.unlocked.is_some())
-        {
-            self.celebrate();
-        }
         self.results = Some(results);
         self.screen = Screen::Results;
-    }
-
-    /// Fireworks across the top of the screen.
-    fn celebrate(&mut self) {
-        let (w, _) = crossterm::terminal::size().unwrap_or((80, 24));
-        let colors = [
-            self.theme.accent,
-            self.theme.accent2,
-            self.theme.accent3,
-            self.theme.good,
-        ];
-        let mut rng = rand::rng();
-        for i in 0..3 {
-            let x = w as f64 * (0.25 + 0.25 * i as f64);
-            self.particles
-                .burst(x, 4.0 + i as f64, 40, &colors, &mut rng);
-        }
     }
 
     fn on_results_key(&mut self, key: KeyEvent) {
@@ -806,7 +843,7 @@ impl App {
             (
                 "Animations",
                 c.animations.label().into(),
-                "Particles, glow and motion. Reduce if it distracts.",
+                "Glow, light and motion. Reduced suits slow SSH links.",
             ),
             (
                 "Colors",

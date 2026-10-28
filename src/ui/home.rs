@@ -64,9 +64,12 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
             TITLE,
             |p| {
                 let q = (p + shift).rem_euclid(2.0);
-                Rgb::gradient(&stops, if q > 1.0 { 2.0 - q } else { q })
+                let c = Rgb::gradient(&stops, if q > 1.0 { 2.0 - q } else { q });
+                // Every few seconds a glint of light runs across the title.
+                let d = p - ((t % 6.0) / 0.9 - 0.2);
+                c.lerp(Rgb(255, 255, 255), 0.7 * (-d * d * 90.0).exp())
             },
-            Some(theme.fade(theme.accent, 0.35)),
+            Some(theme.fade(theme.accent, 0.22)),
         );
         let tag = Line::from(Span::styled(
             "type in the neon",
@@ -209,7 +212,7 @@ fn draw_menu(f: &mut Frame, area: Rect, app: &App, t: f64) {
                 theme.panel
             };
             let base = Style::new().bg(row_bg.c());
-            let marker = if sel { "▸" } else { " " };
+            let marker = " ";
             let used = 6 + label.chars().count() + extra.chars().count();
             let pad = (inner.width as usize).saturating_sub(used + 1);
             Line::from(vec![
@@ -233,6 +236,43 @@ fn draw_menu(f: &mut Frame, area: Rect, app: &App, t: f64) {
         })
         .collect();
     f.render_widget(Paragraph::new(lines), inner);
+    glide_marker(f, inner, app);
+}
+
+/// A bar at the start of each row that glides between rows with
+/// eighth-of-a-row precision.
+fn glide_marker(f: &mut Frame, inner: Rect, app: &App) {
+    const LOWER: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let theme = &app.theme;
+    let pos = if app.animations() == Animations::Off {
+        app.menu_sel as f64
+    } else {
+        app.menu_pos.value_at(std::time::Instant::now())
+    };
+    let x = inner.x;
+    let buf = f.buffer_mut();
+    for row in 0..inner.height {
+        let i = row as f64;
+        let overlap = 1.0 - (pos - i).abs();
+        if overlap <= 0.0 {
+            continue;
+        }
+        let y = inner.y + row;
+        let Some(cell) = buf.cell_mut((x, y)) else {
+            continue;
+        };
+        let under = cell.bg;
+        let eighths = (overlap * 8.0).round() as usize;
+        if pos >= i {
+            // The bar fills the lower part of this row.
+            cell.set_char(LOWER[eighths]).set_fg(theme.accent.c());
+        } else {
+            // The upper part: draw the empty lower part over an accent cell.
+            cell.set_char(LOWER[8 - eighths])
+                .set_fg(under)
+                .set_bg(theme.accent.c());
+        }
+    }
 }
 
 /// The right-aligned detail on a menu row.
