@@ -876,6 +876,42 @@ mod tests {
     }
 
     #[test]
+    fn every_letter_has_plenty_of_real_words() {
+        // Late keys like x, q and z need their own words once unlocked,
+        // or lessons fall back to one word and pseudowords.
+        let t = Trainer::new();
+        for c in 'a'..='z' {
+            let n = t.words().iter().filter(|w| w.contains(c)).count();
+            assert!(n >= 25, "only {n} words contain {c}");
+        }
+    }
+
+    #[test]
+    fn late_keys_get_varied_real_words() {
+        let t = Trainer::new();
+        let l = qwerty();
+        let order = l.learning_order();
+        let p = LayoutProfile {
+            unlocked: order.iter().position(|&c| c == 'x').unwrap() + 1,
+            ..LayoutProfile::default()
+        };
+        let o = Options {
+            words: 40,
+            ..opts()
+        };
+        let d = t.generate(Mode::Learn, &l, &p, &o, 0, &mut StdRng::seed_from_u64(9));
+        assert_eq!(d.focus, Some('x'));
+        let mut real: Vec<&str> = d
+            .text
+            .split(' ')
+            .filter(|w| w.contains('x') && t.words().contains(w))
+            .collect();
+        real.sort_unstable();
+        real.dedup();
+        assert!(real.len() >= 5, "{}", d.text);
+    }
+
+    #[test]
     fn pseudowords_contain_the_focus_key() {
         let t = Trainer::new();
         let mut rng = StdRng::seed_from_u64(1);
