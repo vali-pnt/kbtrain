@@ -135,6 +135,13 @@ fn main() -> Result<()> {
     }
 
     let mut terminal = ratatui::init();
+    // Mouse capture must not outlive a crash, or the shell fills with
+    // escape codes on every mouse move.
+    let restore_terminal = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture).ok();
+        restore_terminal(info);
+    }));
     if let Some(m) = cli.mode {
         app.start(m.into());
     } else if file_given {

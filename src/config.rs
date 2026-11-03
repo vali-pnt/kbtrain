@@ -118,6 +118,8 @@ pub struct Config {
     pub color: ColorDepth,
     pub bell_on_error: bool,
     pub live_stats: bool,
+    /// Mouse support: click, hover and scroll.
+    pub mouse: bool,
     /// Text file for "My text" practice.
     pub text_file: Option<PathBuf>,
     /// User-defined keyboard layouts.
@@ -145,6 +147,7 @@ impl Default for Config {
             color: ColorDepth::Auto,
             bell_on_error: false,
             live_stats: true,
+            mouse: true,
             text_file: None,
             layouts: Vec::new(),
         }
@@ -199,6 +202,10 @@ mod tests {
         assert_eq!(partial.layout, "dvorak");
         assert_eq!(partial.error_mode, ErrorMode::Stop);
         assert_eq!(partial.target_wpm, 35);
+        assert!(
+            partial.mouse,
+            "configs from before mouse support turn it on"
+        );
     }
 
     #[test]

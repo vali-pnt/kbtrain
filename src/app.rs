@@ -1,12 +1,22 @@
 use std::{
+    cell::RefCell,
     io::Write,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::DefaultTerminal;
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    },
+    execute,
+};
+use ratatui::{
+    DefaultTerminal,
+    layout::{Position, Rect},
+};
 
 use crate::{
     config::{Animations, ColorDepth, Config, KeyboardMode, TEST_SECONDS},
@@ -50,6 +60,25 @@ pub const MENU: [MenuItem; 10] = [
     MenuItem::Settings,
     MenuItem::Quit,
 ];
+
+/// Settings rows that are actions (enter) rather than values (← →).
+pub const SETTING_ACTIONS: [usize; 2] = [18, 19];
+
+/// Something on screen the mouse can act on, recorded while drawing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Click {
+    /// Acts like pressing this key (the keycaps in footers).
+    Key(KeyCode, KeyModifiers),
+    /// A home menu row: hovering selects it, clicking starts it.
+    Menu(usize),
+    /// The ◂ ▸ arrows of a home menu option (test length, language).
+    MenuOption(usize, i32),
+    StatsTab(usize),
+    /// A settings row: clicking selects it, clicking again changes it.
+    Setting(usize),
+    /// The ◂ ▸ arrows of the selected setting.
+    SettingStep(usize, i32),
+}
 
 pub const STATS_TABS: [&str; 5] = ["Progress", "Keys", "Transitions", "Fingers", "Calendar"];
 
@@ -124,6 +153,8 @@ pub struct App {
     pub toast: Option<(String, Instant)>,
     /// The user's practice text: (text, is code, display name).
     pub file_text: Option<(String, bool, String)>,
+    /// Click targets from the last frame, topmost last.
+    pub hits: RefCell<Vec<(Rect, Click)>>,
     quit: bool,
 }
 
@@ -186,6 +217,7 @@ impl App {
             last_tick: now,
             toast: None,
             file_text: None,
+            hits: RefCell::new(Vec::new()),
             quit: false,
         };
         app.ensure_layout_profile();
@@ -277,26 +309,46 @@ impl App {
     // ───────────────────────────── main loop ─────────────────────────────
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        let mut mouse = false;
+        let result = self.event_loop(terminal, &mut mouse);
+        if mouse {
+            execute!(std::io::stdout(), DisableMouseCapture).ok();
+        }
+        self.save_profile();
+        result
+    }
+
+    fn event_loop(&mut self, terminal: &mut DefaultTerminal, mouse: &mut bool) -> Result<()> {
         while !self.quit {
+            // Follow the setting, so turning the mouse off frees the
+            // terminal's own text selection right away.
+            if self.config.mouse != *mouse {
+                if self.config.mouse {
+                    execute!(std::io::stdout(), EnableMouseCapture)?;
+                } else {
+                    execute!(std::io::stdout(), DisableMouseCapture)?;
+                }
+                *mouse = self.config.mouse;
+            }
             self.tick();
             terminal.draw(|f| crate::ui::draw(f, self))?;
             if event::poll(self.frame_interval())? {
-                match event::read()? {
-                    Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
-                    _ => {}
-                }
+                self.on_event(event::read()?);
                 // Drain queued input before redrawing so fast typing never lags.
                 while event::poll(Duration::ZERO)? {
-                    if let Event::Key(key) = event::read()?
-                        && key.kind != KeyEventKind::Release
-                    {
-                        self.on_key(key);
-                    }
+                    self.on_event(event::read()?);
                 }
             }
         }
-        self.save_profile();
         Ok(())
+    }
+
+    fn on_event(&mut self, ev: Event) {
+        match ev {
+            Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
+            Event::Mouse(m) => self.on_mouse(m),
+            _ => {}
+        }
     }
 
     fn frame_interval(&self) -> Duration {
@@ -403,6 +455,97 @@ impl App {
             Screen::Results => self.on_results_key(key),
             Screen::Stats => self.on_stats_key(key),
             Screen::Settings => self.on_settings_key(key),
+        }
+    }
+
+    /// Records a click target while drawing.
+    pub fn register(&self, area: Rect, click: Click) {
+        if area.width > 0 && area.height > 0 {
+            self.hits.borrow_mut().push((area, click));
+        }
+    }
+
+    fn hit(&self, x: u16, y: u16) -> Option<Click> {
+        self.hits
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(r, _)| r.contains(Position { x, y }))
+            .map(|(_, c)| *c)
+    }
+
+    pub fn on_mouse(&mut self, m: MouseEvent) {
+        if self.show_help {
+            if matches!(m.kind, MouseEventKind::Down(_)) {
+                self.show_help = false;
+            }
+            return;
+        }
+        let hit = self.hit(m.column, m.row);
+        let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(c) = hit {
+                    self.click(c, 1);
+                }
+            }
+            // Right-click steps an option backwards.
+            MouseEventKind::Down(MouseButton::Right) => match hit {
+                Some(Click::Setting(i) | Click::SettingStep(i, _)) if i == self.settings_sel => {
+                    self.click(Click::SettingStep(i, -1), -1)
+                }
+                Some(Click::MenuOption(i, _)) => self.click(Click::MenuOption(i, -1), -1),
+                _ => {}
+            },
+            MouseEventKind::Moved => {
+                if let Some(Click::Menu(i) | Click::MenuOption(i, _)) = hit {
+                    self.menu_sel = i;
+                }
+            }
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let up = m.kind == MouseEventKind::ScrollUp;
+                let code = match (self.screen, up) {
+                    (Screen::Home | Screen::Settings, true) => KeyCode::Up,
+                    (Screen::Home | Screen::Settings, false) => KeyCode::Down,
+                    (Screen::Stats, true) => KeyCode::Left,
+                    (Screen::Stats, false) => KeyCode::Right,
+                    _ => return,
+                };
+                self.on_key(press(code));
+            }
+            _ => {}
+        }
+    }
+
+    fn click(&mut self, c: Click, dir: i32) {
+        let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        let step = |d: i32| press(if d < 0 { KeyCode::Left } else { KeyCode::Right });
+        match c {
+            Click::Key(code, mods) => self.on_key(KeyEvent::new(code, mods)),
+            Click::Menu(i) if self.screen == Screen::Home => {
+                self.menu_sel = i;
+                self.activate(MENU[i]);
+            }
+            Click::MenuOption(i, d) if self.screen == Screen::Home => {
+                self.menu_sel = i;
+                self.cycle_menu_option(d);
+            }
+            Click::StatsTab(i) if self.screen == Screen::Stats => self.stats_tab = i,
+            Click::Setting(i) if self.screen == Screen::Settings => {
+                if i != self.settings_sel {
+                    self.settings_sel = i;
+                    self.confirm_reset = false;
+                } else if SETTING_ACTIONS.contains(&i) {
+                    self.on_key(press(KeyCode::Enter));
+                } else {
+                    self.on_key(step(dir));
+                }
+            }
+            Click::SettingStep(i, d) if self.screen == Screen::Settings => {
+                self.settings_sel = i;
+                self.on_key(step(d));
+            }
+            _ => {}
         }
     }
 
@@ -861,6 +1004,11 @@ impl App {
                 "Show speed and accuracy while typing.",
             ),
             (
+                "Mouse",
+                on(c.mouse),
+                "Click, hover and scroll. Turn off to select text with the mouse.",
+            ),
+            (
                 "Unlock next key",
                 String::new(),
                 "Skip ahead: unlock the next key now.",
@@ -940,7 +1088,8 @@ impl App {
             }
             15 => c.bell_on_error ^= true,
             16 => c.live_stats ^= true,
-            17 if dir == 0 => {
+            17 => c.mouse ^= true,
+            18 if dir == 0 => {
                 let order = self.layout.learning_order();
                 let lp = self.lp_mut();
                 if lp.unlocked < order.len() {
@@ -953,7 +1102,7 @@ impl App {
                     self.notify("Every key is already unlocked");
                 }
             }
-            18 if dir == 0 => {
+            19 if dir == 0 => {
                 if self.confirm_reset {
                     self.profile.layouts.remove(&self.layout.id);
                     self.ensure_layout_profile();
@@ -1062,7 +1211,7 @@ mod tests {
         let mut a = app();
         a.lp_mut().record('a', true, Some(100.0), &[]);
         a.screen = Screen::Settings;
-        a.settings_sel = 18;
+        a.settings_sel = 19;
         press(&mut a, KeyCode::Enter);
         assert!(a.lp().total_keystrokes() > 0);
         press(&mut a, KeyCode::Enter);

@@ -9,9 +9,9 @@ use ratatui::{
 };
 
 use super::{
-    fmt_secs,
+    draw_hints, fmt_secs,
     fx::{self, Light, Scene, TIERS},
-    gradient_line, hints, keyboard, pill,
+    gradient_line, keyboard, pill,
     theme::{Rgb, Theme},
 };
 use crate::{
@@ -22,7 +22,6 @@ use crate::{
 };
 
 pub fn draw(f: &mut Frame, area: Rect, app: &App, scene: &mut Scene) {
-    let theme = &app.theme;
     let code = app.drill.code;
     let show_bar = matches!(app.drill.mode, Mode::Learn | Mode::Review | Mode::Ngrams)
         && app.config.progressive_unlock;
@@ -125,17 +124,16 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, scene: &mut Scene) {
     }
 
     let new = if code { "ctrl+n" } else { "tab" };
-    f.render_widget(
-        hints(
-            &[
-                (new, "new"),
-                ("ctrl+r", "restart"),
-                ("ctrl+k", "keyboard"),
-                ("esc", "menu"),
-            ],
-            theme,
-        ),
+    draw_hints(
+        f,
         footer,
+        app,
+        &[
+            (new, "new"),
+            ("ctrl+r", "restart"),
+            ("ctrl+k", "keyboard"),
+            ("esc", "menu"),
+        ],
     );
 }
 

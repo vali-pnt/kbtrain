@@ -9,10 +9,10 @@ use ratatui::{
     widgets::{Axis, Chart, Dataset, GraphType, Paragraph},
 };
 
-use super::{bar, fmt_secs, hints, key_label, keyboard, panel, pill, theme::Theme};
+use super::{bar, draw_hints, fmt_secs, key_label, keyboard, panel, pill, theme::Theme};
 use crate::{
     analytics,
-    app::{App, STATS_TABS},
+    app::{App, Click, STATS_TABS},
     layout::Finger,
     stats::{Stat, latency_to_wpm, now_ts, today},
 };
@@ -31,7 +31,14 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!(" {} ", app.layout.name), theme.bold(theme.accent2)),
         Span::raw("  "),
     ];
+    let mut x = tabs.x + Line::from(spans.clone()).width() as u16;
     for (i, name) in STATS_TABS.iter().enumerate() {
+        let w = name.chars().count() as u16 + 4;
+        app.register(
+            Rect::new(x, tabs.y, w, 1).intersection(tabs),
+            Click::StatsTab(i),
+        );
+        x = x.saturating_add(w + 1);
         if i == app.stats_tab {
             spans.extend(pill(
                 format!("{} {name}", i + 1),
@@ -58,9 +65,11 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         3 => fingers(f, body, app),
         _ => calendar(f, body, app),
     }
-    f.render_widget(
-        hints(&[("←→", "tab"), ("1-5", "jump"), ("esc", "back")], theme),
+    draw_hints(
+        f,
         footer,
+        app,
+        &[("←→", "tab"), ("1-5", "jump"), ("esc", "back")],
     );
 }
 

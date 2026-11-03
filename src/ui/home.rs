@@ -6,9 +6,9 @@ use ratatui::{
     widgets::{Clear, Paragraph, Wrap},
 };
 
-use super::{bar, center, fx, gradient_line, hints, panel, theme::Rgb, theme::Theme};
+use super::{bar, center, draw_hints, fx, gradient_line, panel, theme::Rgb, theme::Theme};
 use crate::{
-    app::{App, MENU, MenuItem},
+    app::{App, Click, MENU, MenuItem},
     config::Animations,
     trainer::Mode,
 };
@@ -158,19 +158,18 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         ..area
     };
     f.render_widget(Clear, foot);
-    f.render_widget(
-        Paragraph::new(hints(
-            &[
-                ("↑↓", "choose"),
-                ("←→", "option"),
-                ("enter", "start"),
-                ("?", "keys"),
-                ("q", "quit"),
-            ],
-            theme,
-        ))
-        .style(theme.base()),
+    f.render_widget(Paragraph::new("").style(theme.base()), foot);
+    draw_hints(
+        f,
         foot,
+        app,
+        &[
+            ("↑↓", "choose"),
+            ("←→", "option"),
+            ("enter", "start"),
+            ("?", "keys"),
+            ("q", "quit"),
+        ],
     );
 }
 
@@ -236,6 +235,24 @@ fn draw_menu(f: &mut Frame, area: Rect, app: &App, t: f64) {
         })
         .collect();
     f.render_widget(Paragraph::new(lines), inner);
+    for (i, item) in MENU.iter().enumerate().take(inner.height as usize) {
+        let row = Rect {
+            y: inner.y + i as u16,
+            height: 1,
+            ..inner
+        };
+        app.register(row, Click::Menu(i));
+        // The ◂ ▸ arrows around the selected row's option.
+        let (extra, _) = menu_extra(*item, app, true);
+        if i == app.menu_sel && extra.starts_with('◂') {
+            let w = extra.chars().count() as u16;
+            let end = row.right().saturating_sub(1);
+            let start = end.saturating_sub(w).max(row.x);
+            let arrow = |x: u16| Rect::new(x, row.y, 2, 1).intersection(row);
+            app.register(arrow(start), Click::MenuOption(i, -1));
+            app.register(arrow(end.saturating_sub(2)), Click::MenuOption(i, 1));
+        }
+    }
     glide_marker(f, inner, app);
 }
 

@@ -8,9 +8,8 @@ use ratatui::{
 };
 
 use super::{
-    bar, fmt_secs,
+    bar, draw_hints, fmt_secs,
     fx::{self, Light, Pixels, Scene},
-    hints,
     home::sparkline,
     key_label, panel,
     theme::Rgb,
@@ -243,17 +242,16 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App, scene: &mut Scene) {
     if bottom.height > 0 {
         draw_bottom(f, bottom, app, age);
     }
-    f.render_widget(
-        hints(
-            &[
-                ("enter", "next drill"),
-                ("r", "retry"),
-                ("s", "stats"),
-                ("esc", "menu"),
-            ],
-            theme,
-        ),
+    draw_hints(
+        f,
         footer,
+        app,
+        &[
+            ("enter", "next drill"),
+            ("r", "retry"),
+            ("s", "stats"),
+            ("esc", "menu"),
+        ],
     );
 
     // How the room reacts.

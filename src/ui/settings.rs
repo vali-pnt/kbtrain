@@ -6,11 +6,8 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use super::{center, gradient_line, hints, panel};
-use crate::app::App;
-
-/// Rows that are actions (enter) rather than values (← →).
-const ACTIONS: [usize; 2] = [17, 18];
+use super::{center, draw_hints, gradient_line, panel};
+use crate::app::{App, Click, SETTING_ACTIONS as ACTIONS};
 
 pub fn draw(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
@@ -89,6 +86,23 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
     f.render_widget(Paragraph::new(lines), inner);
+    for (row, i) in (first..rows.len()).take(visible).enumerate() {
+        let r = Rect {
+            y: inner.y + row as u16,
+            height: 1,
+            ..inner
+        };
+        app.register(r, Click::Setting(i));
+        if i == app.settings_sel && !ACTIONS.contains(&i) {
+            // "◂ value ▸" ends one cell before the row does.
+            let w = rows[i].1.chars().count() as u16 + 4;
+            let end = r.right().saturating_sub(1);
+            let start = end.saturating_sub(w).max(r.x);
+            let arrow = |x: u16| Rect::new(x, r.y, 2, 1).intersection(r);
+            app.register(arrow(start), Click::SettingStep(i, -1));
+            app.register(arrow(end.saturating_sub(2)), Click::SettingStep(i, 1));
+        }
+    }
 
     if let Some((_, _, desc)) = rows.get(app.settings_sel) {
         f.render_widget(
@@ -100,16 +114,15 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
         y: area.bottom().saturating_sub(1),
         ..footer
     };
-    f.render_widget(
-        hints(
-            &[
-                ("↑↓", "choose"),
-                ("←→", "change"),
-                ("enter", "action"),
-                ("esc", "back"),
-            ],
-            theme,
-        ),
+    draw_hints(
+        f,
         foot,
+        app,
+        &[
+            ("↑↓", "choose"),
+            ("←→", "change"),
+            ("enter", "action"),
+            ("esc", "back"),
+        ],
     );
 }

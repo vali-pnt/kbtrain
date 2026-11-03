@@ -16,8 +16,10 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
+use crossterm::event::{KeyCode, KeyModifiers};
+
 use crate::{
-    app::{App, Screen},
+    app::{App, Click, Screen},
     config::Animations,
 };
 use fx::Scene;
@@ -26,6 +28,7 @@ use theme::{Rgb, Theme};
 pub fn draw(f: &mut Frame, app: &App) {
     let theme = &app.theme;
     let anim = app.animations();
+    app.hits.borrow_mut().clear();
     f.render_widget(Block::new().style(theme.base()), f.area());
     let mut scene = Scene::default();
     match app.screen {
@@ -156,6 +159,54 @@ pub fn hints<'a>(items: &[(&'a str, &'a str)], theme: &Theme) -> Line<'a> {
     Line::from(spans).centered()
 }
 
+/// The key a footer keycap stands for, if it is a single key.
+fn hint_key(k: &str) -> Option<(KeyCode, KeyModifiers)> {
+    let (mods, k) = match k.strip_prefix("ctrl+") {
+        Some(rest) => (KeyModifiers::CONTROL, rest),
+        None => (KeyModifiers::NONE, k),
+    };
+    let code = match k {
+        "enter" => KeyCode::Enter,
+        "esc" => KeyCode::Esc,
+        "tab" => KeyCode::Tab,
+        _ => {
+            let mut cs = k.chars();
+            match (cs.next(), cs.next()) {
+                (Some(c), None) => KeyCode::Char(c),
+                _ => return None,
+            }
+        }
+    };
+    Some((code, mods))
+}
+
+/// Draws a footer of key hints and makes each keycap clickable.
+pub fn draw_hints(f: &mut Frame, area: Rect, app: &App, items: &[(&str, &str)]) {
+    let line = hints(items, &app.theme);
+    let area = area.intersection(f.area());
+    if area.is_empty() {
+        return;
+    }
+    // Mirrors how a centred line is laid out (and cropped, when too wide).
+    let width = line.width() as i32;
+    let mut x = area.x as i32 + (area.width as i32 - width) / 2;
+    for (i, (k, v)) in items.iter().enumerate() {
+        if i > 0 {
+            x += 3;
+        }
+        let w = (Span::raw(*k).width() + 2 + Span::raw(*v).width() + 1) as i32;
+        let (l, r) = (x.max(area.x as i32), (x + w).min(area.right() as i32));
+        if let Some((code, mods)) = hint_key(k)
+            && r > l
+        {
+            let hit = Rect::new(l as u16, area.y, (r - l) as u16, 1);
+            app.register(hit, Click::Key(code, mods));
+        }
+        x += w;
+    }
+    f.render_widget(line, area);
+}
+
 pub fn fmt_secs(secs: f64) -> String {
     let s = secs.max(0.0).round() as u64;
     if s >= 3600 {
@@ -190,6 +241,8 @@ fn draw_help(f: &mut Frame, app: &App) {
         ("ctrl+w", "delete word"),
         ("esc", "back to menu"),
         ("ctrl+c", "quit"),
+        ("", ""),
+        ("mouse", "click rows, tabs and keycaps; scroll"),
     ];
     let area = center(f.area(), 56, rows.len() as u16 + 4);
     f.render_widget(Clear, area);
@@ -236,6 +289,7 @@ fn draw_toast(f: &mut Frame, msg: &str, age: f64, app: &App) {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     use ratatui::{Terminal, backend::TestBackend};
 
     use crate::{
@@ -260,6 +314,110 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Draws the screen, then sends a mouse event at the first cell where
+    /// `needle` appears on it.
+    fn mouse_at(app: &mut App, needle: &str, kind: MouseEventKind) {
+        let (w, h) = (100, 34);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        app.tick();
+        term.draw(|f| super::draw(f, app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let want: Vec<String> = needle.chars().map(String::from).collect();
+        let (column, row) = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                want.iter()
+                    .enumerate()
+                    .all(|(i, c)| x + (i as u16) < w && buf[(x + i as u16, y)].symbol() == c)
+            })
+            .unwrap_or_else(|| panic!("'{needle}' is not on screen"));
+        app.on_mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    fn click(app: &mut App, needle: &str) {
+        mouse_at(app, needle, MouseEventKind::Down(MouseButton::Left));
+    }
+
+    #[test]
+    fn mouse_drives_the_home_menu() {
+        let mut app = App::new(Config::default(), None, Profile::default(), None).unwrap();
+        mouse_at(&mut app, "Words", MouseEventKind::Moved);
+        assert_eq!(app.menu_sel, 3, "hovering selects");
+        mouse_at(&mut app, "Words", MouseEventKind::ScrollDown);
+        assert_eq!(app.menu_sel, 4, "the wheel moves the selection");
+        let secs = app.config.test_seconds;
+        click(&mut app, "▸");
+        assert_ne!(
+            app.config.test_seconds, secs,
+            "the arrows change the option"
+        );
+        click(&mut app, "◂");
+        assert_eq!(app.config.test_seconds, secs);
+        assert_eq!(app.screen, Screen::Home);
+        click(&mut app, "Settings");
+        assert_eq!(app.screen, Screen::Settings);
+    }
+
+    #[test]
+    fn mouse_changes_settings() {
+        let mut app = App::new(Config::default(), None, Profile::default(), None).unwrap();
+        app.screen = Screen::Settings;
+        let goal = app.config.daily_goal_minutes;
+        click(&mut app, "Daily goal");
+        assert_eq!(app.settings_sel, 5);
+        assert_eq!(app.config.daily_goal_minutes, goal, "first click selects");
+        click(&mut app, "Daily goal");
+        assert_eq!(app.config.daily_goal_minutes, goal + 5);
+        click(&mut app, "◂");
+        assert_eq!(app.config.daily_goal_minutes, goal);
+        mouse_at(
+            &mut app,
+            "Daily goal",
+            MouseEventKind::Down(MouseButton::Right),
+        );
+        assert_eq!(
+            app.config.daily_goal_minutes,
+            goal - 5,
+            "right-click steps back"
+        );
+        mouse_at(&mut app, "Daily goal", MouseEventKind::ScrollDown);
+        assert_eq!(app.settings_sel, 6);
+        click(&mut app, "Mouse");
+        click(&mut app, "Mouse");
+        assert!(!app.config.mouse);
+        click(&mut app, "back");
+        assert_eq!(app.screen, Screen::Home);
+    }
+
+    #[test]
+    fn mouse_switches_stats_tabs_and_clicks_keycaps() {
+        let mut app = App::new(Config::default(), None, Profile::default(), None).unwrap();
+        app.screen = Screen::Stats;
+        click(&mut app, STATS_TABS[2]);
+        assert_eq!(app.stats_tab, 2);
+        mouse_at(&mut app, STATS_TABS[2], MouseEventKind::ScrollDown);
+        assert_eq!(app.stats_tab, 3);
+        // Keycaps that stand for several keys do nothing when clicked.
+        click(&mut app, "←→");
+        assert_eq!((app.screen, app.stats_tab), (Screen::Stats, 3));
+        click(&mut app, "esc");
+        assert_eq!(app.screen, Screen::Home);
+
+        app.start(Mode::Learn);
+        click(&mut app, "esc");
+        assert_eq!(app.screen, Screen::Home, "keycaps work mid-drill");
+
+        app.show_help = true;
+        click(&mut app, "keys");
+        assert!(!app.show_help, "a click closes help");
+        assert_eq!(app.screen, Screen::Home, "without clicking through it");
     }
 
     /// An app that has finished several drills, typed with human-like timing.

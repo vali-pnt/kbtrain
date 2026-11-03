@@ -96,6 +96,12 @@ Typographic quotes and dashes are converted to keyboard characters.
 | Drill | `esc` | back to menu (time still counts toward today) |
 | Results | `enter`, `r`, `s`, `esc` | next, retry, stats, menu |
 
+The mouse works too. Hover or scroll to choose a menu row, and click it to
+start. Click the `◂ ▸` arrows to change an option, a stats tab to switch to
+it, or a keycap in any footer to press it. In Settings, click a row to select
+it and click again to change it (right-click goes back). Turn `mouse` off if
+you'd rather select text with the mouse.
+
 ## Command line
 
 ```
@@ -132,6 +138,7 @@ progressive_unlock = true
 animations = "full"          # full | reduced | off
 color = "auto"               # auto | truecolor | ansi256
 bell_on_error = false
+mouse = true                 # click, hover and scroll; off frees text selection
 
 # Your own layouts: four rows (number, top, home, bottom). Shifted
 # characters default to uppercase if shift_rows is omitted.
